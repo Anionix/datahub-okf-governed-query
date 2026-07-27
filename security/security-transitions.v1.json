@@ -1,0 +1,32 @@
+{
+  "apiVersion": "security-transitions/v1",
+  "transitions": [
+    {
+      "root": "integration",
+      "path": "scripts/check-tcb.mjs",
+      "symbol": "inspectFile",
+      "accepts": "UTF-8 bytes from one selected governed source file",
+      "emits": "declarations and contract comment locations from its AST",
+      "failure": "rejects parse diagnostics forbidden syntax and ignored diagnostics",
+      "invariant": "source text is parsed but never evaluated"
+    },
+    {
+      "root": "integration",
+      "path": "scripts/check-tcb.mjs",
+      "symbol": "parseManifest",
+      "accepts": "raw manifest text from the selected repository",
+      "emits": "a closed sorted transition manifest",
+      "failure": "rejects malformed or noncanonical manifest state",
+      "invariant": "unvalidated fields never reach source inspection"
+    },
+    {
+      "root": "integration",
+      "path": "scripts/check-tcb.mjs",
+      "symbol": "verifyRepository",
+      "accepts": "a closed manifest and selected fixed repository roots",
+      "emits": "success only after exhaustive AST and contract verification",
+      "failure": "rejects stale missing duplicate or forbidden transition state",
+      "invariant": "the stable compiler API parses source without executing modules"
+    }
+  ]
+}

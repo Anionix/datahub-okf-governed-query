@@ -1,0 +1,7 @@
+.cache/
+.direnv/
+.venv/
+coverage/
+dist/
+node_modules/
+work/
