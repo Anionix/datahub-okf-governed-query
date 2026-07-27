@@ -1,0 +1,6 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+overrides:
+  "@modelcontextprotocol/sdk": "1.29.0"
+  "zod": "4.4.3"

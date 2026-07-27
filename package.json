@@ -1,0 +1,26 @@
+{
+  "name": "datahub-okf-governed-query",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "engines": {
+    "node": "24.18.0",
+    "pnpm": "11.17.0"
+  },
+  "scripts": {
+    "tcb:check": "node scripts/check-tcb.mjs --manifest security/security-transitions.v1.json",
+    "format": "biome format --write .",
+    "scripts:check": "tsc -p tsconfig.scripts.json --noEmit --pretty false",
+    "check": "pnpm tcb:check && biome check . && pnpm scripts:check",
+    "test": "pnpm -r --if-present run test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.5",
+    "@types/node": "24.13.3",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "@vitest/coverage-v8": "4.1.10",
+    "fast-check": "4.9.0",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "vitest": "4.1.10"
+  }
+}
