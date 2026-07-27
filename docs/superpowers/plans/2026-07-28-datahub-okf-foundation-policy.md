@@ -6,7 +6,7 @@
 
 **Architecture:** A strict `@okf-datahub/contracts` package owns every value crossing a process boundary. A separate build-only `@okf-datahub/policy-compiler` accepts restricted OKF v0.2 Markdown/frontmatter plus reviewed JSON inputs, emits RFC 8785-compatible canonical JSON, and never ships in either runtime image.
 
-**Tech Stack:** Node.js 24.18.0, pnpm 11.17.0, TypeScript 7.0.2, Zod 4.4.3, YAML 2.9.0, Vitest 4.1.10, fast-check 4.9.0, Biome 2.5.5, Nixpkgs `8623c4c20aa4ca2f5fb81510d2944066c3fb0d96`, uv 0.11.32, Lean 4.32.1
+**Tech Stack:** Node.js 24.18.0, pnpm 11.17.0, TypeScript 7.0.2 CLI, `@typescript/typescript6` 6.0.2 Compiler API, Zod 4.4.3, YAML 2.9.0, Vitest 4.1.10, fast-check 4.9.0, Biome 2.5.5, Nixpkgs `8623c4c20aa4ca2f5fb81510d2944066c3fb0d96`, uv 0.11.32, Lean 4.32.1
 
 ## Global Constraints
 
@@ -199,13 +199,23 @@ toolchain, shell, SQL, or workflow script:
   "devDependencies": {
     "@biomejs/biome": "2.5.5",
     "@types/node": "24.13.3",
+    "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/coverage-v8": "4.1.10",
     "fast-check": "4.9.0",
-    "typescript": "7.0.2",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
     "vitest": "4.1.10"
   }
 }
 ```
+
+The alias split is mandatory. `@typescript/native` owns the exact TypeScript
+7.0.2 `tsc` CLI, while imports from `typescript` resolve to the exact stable
+TypeScript 6.0.2 Compiler API compatibility package. The lockfile must preserve
+both package identities and versions. TypeScript 7.0 does not ship a stable
+programmatic API, so the checker may import its API only from bare `typescript`;
+all `@typescript/native` and `typescript/unstable/*` imports are forbidden.
+[Microsoft's TypeScript 7.0 release notes](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/)
+are the authority for this side-by-side compatibility boundary.
 
 After 1A merges, 1B adds exactly `toolchain:check`, `shell-tcb:check`, and
 `sql-tcb:check`; its aggregate is:
@@ -255,8 +265,9 @@ arbitrary repository JavaScript are outside that root. Duplicate
 
 `scripts/check-tcb.mjs` scans all fixed roots that exist when `--roots` is
 omitted; `--roots` is allowed only for focused tests and accepts only those
-five names. For every registry entry in a selected root, the
-TypeScript compiler API must resolve exactly one declaration or class method
+five names. For every registry entry in a selected root, the stable TypeScript
+6.0.2 Compiler API imported from the compatibility alias must resolve exactly
+one declaration or class method
 and find this immediately adjacent comment with byte-equal clauses:
 
 ```ts
@@ -278,7 +289,9 @@ rejects
 `NonNullExpression`, `@ts-ignore`, `@ts-expect-error`, and
 `registerTool(`, reporting only file, line, and syntax kind. Tests for the
 scanner contain one fixture per forbidden construct plus missing, stale,
-duplicate, detached, clause-mismatch, and unregistered transition comments.
+duplicate, detached, clause-mismatch, and unregistered transition comments. A
+regression assertion also requires the bare `typescript` API import and rejects
+all `@typescript/native` and `typescript/unstable/*` imports in the checker.
 
 The shell and SQL registries use the same four exact contract clauses plus raw
 SHA-256, sorted by path. They begin with empty transition arrays and are
