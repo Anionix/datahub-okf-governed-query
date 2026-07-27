@@ -193,7 +193,7 @@ toolchain, shell, SQL, or workflow script:
     "tcb:check": "node scripts/check-tcb.mjs --manifest security/security-transitions.v1.json",
     "format": "biome format --write .",
     "scripts:check": "tsc -p tsconfig.scripts.json --noEmit --pretty false",
-    "check": "pnpm tcb:check && biome check . && tsc -b --pretty false && pnpm scripts:check",
+    "check": "pnpm tcb:check && biome check . && pnpm scripts:check",
     "test": "pnpm -r --if-present run test"
   },
   "devDependencies": {
@@ -230,7 +230,7 @@ After 1A merges, 1B adds exactly `toolchain:check`, `shell-tcb:check`, and
 
 ```json
 {
-  "check": "pnpm tcb:check && pnpm shell-tcb:check && pnpm sql-tcb:check && biome check . && tsc -b --pretty false && pnpm scripts:check",
+  "check": "pnpm tcb:check && pnpm shell-tcb:check && pnpm sql-tcb:check && biome check . && pnpm scripts:check",
   "shell-tcb:check": "node scripts/check-security-shell.mjs security/security-shell-transitions.v1.json",
   "sql-tcb:check": "node scripts/check-security-sql.mjs security/security-sql-transitions.v1.json",
   "toolchain:check": "node scripts/check-toolchain.mjs"
@@ -242,7 +242,7 @@ aggregate to:
 
 ```json
 {
-  "check": "pnpm tcb:check && pnpm shell-tcb:check && pnpm sql-tcb:check && pnpm workflow:check && biome check . && tsc -b --pretty false && pnpm scripts:check",
+  "check": "pnpm tcb:check && pnpm shell-tcb:check && pnpm sql-tcb:check && pnpm workflow:check && biome check . && pnpm scripts:check",
   "workflow:check": "node scripts/check-policy-workflow.mjs security/github-actions-uses.v1.json"
 }
 ```
@@ -253,6 +253,14 @@ minimal flake exposing only the pinned Node/pnpm shell from the exact Nixpkgs
 commit below. 1B extends that already-locked flake with the native-tool,
 shell, and SQL definitions; 1C alone owns the workflow allowlist/checker and
 native workflow matrix.
+
+Tasks 1A through 1C do not run `tsc -b`: their root solution has no project
+reference, and both pinned TypeScript CLIs reject its intentional `files: []`
+with `TS18002`. `scripts:check` remains mandatory. Task 2A adds `tsc -b` to the
+aggregate in the same PR that adds the first project reference. The
+[TypeScript native support table](https://github.com/microsoft/typescript-go/blob/main/README.md)
+is the authority that build mode and project references themselves are
+supported.
 
 `security/security-transitions.v1.json` is a strict object containing only
 `apiVersion: "security-transitions/v1"` and a `transitions` array. Each entry
@@ -435,7 +443,7 @@ real-service suites remain owned exclusively by their clean lifecycle runners.
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "suspicious": {
         "noExplicitAny": "error",
         "noDoubleEquals": "error"
@@ -450,6 +458,10 @@ real-service suites remain owned exclusively by their clean lifecycle runners.
   }
 }
 ```
+
+The `preset` form follows the
+[Biome 2.5 release contract](https://github.com/biomejs/website/blob/main/src/content/docs/blog/biome-v2-5.mdx);
+the deprecated `recommended` boolean is forbidden.
 
 ```gitignore
 .cache/
@@ -730,7 +742,7 @@ separately for 1A, 1B, and 1C; a combined Task 1 commit is forbidden.
 
 | Task | Branch | Files (exhaustive) | Commit |
 |---|---|---|---|
-| 2A — public contracts | `feat/closed-public-contracts` | Create `packages/contracts/package.json`, `packages/contracts/tsconfig.json`, `packages/contracts/src/literals.ts`, `packages/contracts/src/public.ts`, `packages/contracts/src/mcp-json-schemas.ts`, `packages/contracts/src/parse.ts`, `packages/contracts/src/index.ts`, `packages/contracts/test/public.test.ts`; modify `tsconfig.json`, `pnpm-lock.yaml`, `security/security-transitions.v1.json` | `feat(contracts): define closed public v1 contracts` |
+| 2A — public contracts | `feat/closed-public-contracts` | Create `packages/contracts/package.json`, `packages/contracts/tsconfig.json`, `packages/contracts/src/literals.ts`, `packages/contracts/src/public.ts`, `packages/contracts/src/mcp-json-schemas.ts`, `packages/contracts/src/parse.ts`, `packages/contracts/src/index.ts`, `packages/contracts/test/public.test.ts`; modify `package.json`, `tsconfig.json`, `pnpm-lock.yaml`, `security/security-transitions.v1.json` | `feat(contracts): define closed public v1 contracts` |
 | 2B — internal executor protocol | `feat/closed-executor-protocol` | Create `packages/contracts/src/datahub-evidence.ts`, `packages/contracts/src/executor-protocol.ts`, `packages/contracts/test/executor-protocol.test.ts`; modify `packages/contracts/src/index.ts`, `security/security-transitions.v1.json` | `feat(contracts): define closed executor protocol` |
 
 2A runs only `public.test.ts` and snapshots the four public MCP schemas. The
@@ -751,6 +763,7 @@ the contracts type/Biome and TCB gates.
 - Create: `packages/contracts/src/index.ts`
 - Create: `packages/contracts/test/public.test.ts`
 - Create: `packages/contracts/test/executor-protocol.test.ts`
+- Modify: `package.json`
 - Modify: `tsconfig.json`
 - Modify: `pnpm-lock.yaml`
 - Modify: `security/security-transitions.v1.json`
@@ -849,6 +862,8 @@ references the other row's not-yet-created test.
 ```
 
 Add `{"path":"./packages/contracts"}` to the root `tsconfig.json` references.
+In the same 2A change, insert `tsc -b --pretty false` between `biome check .`
+and `pnpm scripts:check` in the root aggregate `check` script.
 
 ```ts
 // packages/contracts/src/literals.ts
