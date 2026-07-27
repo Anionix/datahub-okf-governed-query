@@ -6,7 +6,7 @@
 
 **Architecture:** A strict `@okf-datahub/contracts` package owns every value crossing a process boundary. A separate build-only `@okf-datahub/policy-compiler` accepts restricted OKF v0.2 Markdown/frontmatter plus reviewed JSON inputs, emits RFC 8785-compatible canonical JSON, and never ships in either runtime image.
 
-**Tech Stack:** Node.js 24.18.0, pnpm 11.17.0, TypeScript 7.0.2 CLI, `@typescript/typescript6` 6.0.2 Compiler API, Zod 4.4.3, YAML 2.9.0, Vitest 4.1.10, fast-check 4.9.0, Biome 2.5.5, Nixpkgs `8623c4c20aa4ca2f5fb81510d2944066c3fb0d96`, uv 0.11.32, Lean 4.32.1
+**Tech Stack:** Node.js 24.18.0, pnpm 11.17.0, TypeScript 7.0.2 CLI, `@typescript/typescript6` package 6.0.2 with Compiler API identity 6.0.3, Zod 4.4.3, YAML 2.9.0, Vitest 4.1.10, fast-check 4.9.0, Biome 2.5.5, Nixpkgs `8623c4c20aa4ca2f5fb81510d2944066c3fb0d96`, uv 0.11.32, Lean 4.32.1
 
 ## Global Constraints
 
@@ -210,10 +210,18 @@ toolchain, shell, SQL, or workflow script:
 
 The alias split is mandatory. `@typescript/native` owns the exact TypeScript
 7.0.2 `tsc` CLI, while imports from `typescript` resolve to the exact stable
-TypeScript 6.0.2 Compiler API compatibility package. The lockfile must preserve
-both package identities and versions. TypeScript 7.0 does not ship a stable
-programmatic API, so the checker may import its API only from bare `typescript`;
-all `@typescript/native` and `typescript/unstable/*` imports are forbidden.
+`@typescript/typescript6` compatibility package version 6.0.2. That package's
+embedded Compiler API and `tsc6` self-identify as 6.0.3. The lockfile must
+preserve both package identities and versions, and the fixture suite must assert
+package version 6.0.2, API version 6.0.3, and a callable `createSourceFile`.
+The primary artifact is the
+[official npm tarball](https://registry.npmjs.org/@typescript/typescript6/-/typescript6-6.0.2.tgz)
+with integrity
+`sha512-mbCddXd+jm7hfx7w2YU64/Av4/NqqeG3GoRZgxPcgoTxYjhrcfJRw9ULch71SS4G+Q3bOXFhRvPqjguN0Hyp5w==`;
+its package manifest and exported API identity are checked from installed bytes.
+TypeScript 7.0 does not ship a stable programmatic API, so the checker may
+import its API only from bare `typescript`; all `@typescript/native` and
+`typescript/unstable/*` imports are forbidden.
 [Microsoft's TypeScript 7.0 release notes](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/)
 are the authority for this side-by-side compatibility boundary.
 
@@ -265,9 +273,9 @@ arbitrary repository JavaScript are outside that root. Duplicate
 
 `scripts/check-tcb.mjs` scans all fixed roots that exist when `--roots` is
 omitted; `--roots` is allowed only for focused tests and accepts only those
-five names. For every registry entry in a selected root, the stable TypeScript
-6.0.2 Compiler API imported from the compatibility alias must resolve exactly
-one declaration or class method
+five names. For every registry entry in a selected root, the stable Compiler API
+identity 6.0.3 imported from the package-6.0.2 compatibility alias must resolve
+exactly one declaration or class method
 and find this immediately adjacent comment with byte-equal clauses:
 
 ```ts
