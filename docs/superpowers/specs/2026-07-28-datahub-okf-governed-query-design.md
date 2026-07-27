@@ -71,8 +71,8 @@ users, documents, lineage, or query history.
 - Remote HTTP transport, OAuth, multi-user authorization, or multi-tenancy
 - Production or personal data
 - Free-form SQL or natural-language-to-SQL
-- Joins, aggregates, sorting, subqueries, CTEs, functions, or arbitrary
-  expressions
+- Joins, aggregates, caller-controlled sorting, subqueries, CTEs, functions,
+  or arbitrary expressions
 - Multiple datasets or database backends
 - Dynamic DataHub search as an authorization mechanism
 - Arbitrary text returned to a model
@@ -179,7 +179,10 @@ flowchart LR
 
 - `context-mcp` and `query-executor` run in different containers and under
   different non-root UIDs.
-- `context-mcp` joins only the metadata network.
+- `context-mcp` joins only `metadata_api_net`, shared with GMS but not with
+  DataHub's MySQL, Elasticsearch, Kafka, Schema Registry, ZooKeeper, or upgrade
+  services. GMS is the only service dual-homed onto the isolated
+  `datahub_backend_net`.
 - `query-executor` joins only the private PostgreSQL network.
 - They share no network namespace, environment variables, temporary directory,
   process namespace, or secret mount.
@@ -300,6 +303,13 @@ nested paths, type mismatch, or missing required `email` PII tag returns
 executor compares normalized evidence with ResourceBinding. DataHub evidence can
 veto but cannot add an allowed field.
 
+The pinned v0.6.0 characterization contract accepts `get_entities`
+`structuredContent` only as an object whose sole `result` member is the
+one-element entity array, and accepts `list_schema_fields` `structuredContent`
+only as the direct pagination object. The adapter never reparses JSON from MCP
+text `content`. A different wrapper shape from the real pinned child is a
+release `NO-GO`, not a fallback case.
+
 Frames are a 4-byte unsigned big-endian length followed by exactly one UTF-8
 JSON value. Request frames are at most 32 KiB; response frames are at most
 320 KiB including the envelope. The decoder rejects an over-limit length before
@@ -389,8 +399,8 @@ Success `structuredContent`:
   },
   "fields": [
     {
-      "fieldId": "total",
-      "valueType": "DECIMAL",
+      "fieldId": "customer_id",
+      "valueType": "OPAQUE_ID",
       "policyPermittedUses": ["PROJECT", "FILTER"],
       "classifications": []
     },
@@ -399,6 +409,24 @@ Success `structuredContent`:
       "valueType": "PROHIBITED",
       "policyPermittedUses": [],
       "classifications": ["PII"]
+    },
+    {
+      "fieldId": "total",
+      "valueType": "DECIMAL",
+      "policyPermittedUses": ["PROJECT", "FILTER"],
+      "classifications": []
+    },
+    {
+      "fieldId": "status",
+      "valueType": "ENUM",
+      "policyPermittedUses": ["PROJECT", "FILTER"],
+      "classifications": []
+    },
+    {
+      "fieldId": "placed_on",
+      "valueType": "DATE",
+      "policyPermittedUses": ["PROJECT", "FILTER"],
+      "classifications": []
     }
   ],
   "policy": {
@@ -407,7 +435,7 @@ Success `structuredContent`:
     "manifestDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
     "attestationDigest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
     "expiresAt": "2026-12-31T23:59:59Z",
-    "approvalId": "governance-review-2026-07"
+    "approvalId": "github-review:123456789"
   }
 }
 ```
@@ -555,8 +583,12 @@ The adapter instead uses reviewed low-level `Server` handlers:
   validation, and maps every failure to a fixed envelope and fixed `content`.
 - Success and `isError` results are application-validated against closed runtime
   output unions before return; SDK validation is defense in depth only.
-- The outermost handler catches every exception and emits `INTERNAL_FAILURE`.
-  No thrown `Error.message` crosses stdout.
+- The outermost handler catches every exception. After a valid operation ID
+  exists it emits the matching fixed `INTERNAL_FAILURE` tool envelope. If the
+  CSPRNG throws or returns the wrong byte length before an operation ID exists,
+  it emits only JSON-RPC `-32603` with fixed message `Internal failure`; it
+  performs no admission or downstream work. No thrown `Error.message` crosses
+  stdout.
 
 CI snapshots the exact `tools/list` result and verifies literal versions, closed
 unions, `additionalProperties: false`, and every representable bound.
@@ -568,13 +600,23 @@ requests that reach the handler. Malformed or oversized JSON-RPC transport
 frames are rejected without echoing input and are never converted into a tool
 result.
 
+An unregistered tool name returns JSON-RPC `-32602` with the fixed message
+`Unknown tool`; the supplied name is not echoed and no tool-specific structured
+envelope is emitted. For registered tools, expected application decisions
+`INVALID_INPUT`, `RESOURCE_NOT_BOUND`, `POLICY_EXPIRED`, `FIELD_UNKNOWN`, and
+`FIELD_USE_DENIED` use `isError: false`. Operational/integrity failures
+`CONTEXT_UNAVAILABLE`, `CONTEXT_INVALID`, `POLICY_INTEGRITY_FAILED`,
+`RESOURCE_BUSY`, `DB_SCHEMA_MISMATCH`, `EXECUTION_TIMEOUT`, `OUTPUT_INVALID`,
+and `INTERNAL_FAILURE` use `isError: true`. Success is never an error.
+
 ## 10. OKF source and deterministic compilation
 
 ### 10.1 Enforcement profile
 
 The human-reviewed source is valid OKF v0.2 plus one namespaced extension:
 
-```yaml
+```markdown
+---
 type: "Data Usage Policy"
 resource: "urn:li:dataset:(urn:li:dataPlatform:postgres,demo.analytics.customer_orders,PROD)"
 status: "stable"
@@ -595,11 +637,18 @@ x-okf-datahub-policy:
     total: {project: ALLOW, filter: [EQ, LT, LTE, GT, GTE]}
     status: {project: ALLOW, filter: [EQ]}
     placed_on: {project: ALLOW, filter: [EQ, LT, LTE, GT, GTE]}
+---
+# Usage rule
+
+Customer email addresses must not appear in analytical projections or filter
+values. The Markdown body is reviewed human explanation; only the namespaced
+frontmatter extension is compiled into executable policy.
 ```
 
-`verified` is retained for human provenance only. Public `approvalId` is derived
-from the protected build attestation described below, never from a free-form OKF
-field.
+`verified` is retained for human provenance only. Public `approvalId` is the
+exact canonical string `github-review:<reviewDatabaseId>`, where the suffix is
+a validated non-zero decimal GitHub review database ID from the protected build
+attestation. It is never derived from a free-form OKF field.
 
 The stricter enforcement profile requires explicit:
 
@@ -661,8 +710,10 @@ The protected build gate creates `review-attestation.v1.json`. It binds the
 exact policy source identity and raw-file digest, Policy IR digest,
 ResourceBinding digest, accepted OKF specification digest, and compiler artifact
 digest to an allowlisted reviewer and review ID applying to that exact commit.
-The manifest records the attestation digest. The build fails if any tuple member
-is outside the reviewed change.
+The manifest records the attestation digest. Every tuple authority must resolve
+at the reviewed head. The complete reviewed diff must contain every critical
+authority blob whose bytes differ from the trusted base; unchanged authorities
+need not be edited merely to enter the changed-file list.
 
 The same source and compiler must produce byte-identical artifacts. The
 artifacts are copied into the executor image by digest and mounted read-only.
@@ -700,7 +751,7 @@ The binding is a closed mapping, never a parsed or inferred URN:
     "relation": "customer_orders",
     "relationKind": "TABLE",
     "accessMethod": "heap",
-    "schemaContractDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    "schemaContractDigest": "sha256:87227d948568792ada19921a614fcb8517c27e71629bc82babf3b6fa073308c3"
   },
   "fields": {
     "customer_id": {"column": "customer_id", "type": "text"},
@@ -711,6 +762,10 @@ The binding is a closed mapping, never a parsed or inferred URN:
   }
 }
 ```
+
+That digest is the domain-separated canonical digest of the exact
+`postgres-schema/v1` contract in the foundation plan; it is not illustrative
+and must match the checked-in golden bytes.
 
 `deploymentId` is a trusted constant bound to the fixed DataHub endpoint and is
 not inferred from the dataset URN. A later profile may add platform-instance
@@ -771,6 +826,7 @@ ENVELOPE_RECEIVED
 → DB_SCHEMA_VERIFIED
 → AUTHORIZED
 → SQL_COMPILED
+→ APPLICATION_QUERY_SENT
 → EXECUTED
 → OUTPUT_VALIDATED
 → ROLLBACK_CONFIRMED
@@ -859,11 +915,15 @@ types, constraints, ownership, relation kind, and ACL requirements, excluding
 volatile OIDs. Startup must match that contract, then record the resolved
 relation OID for this executor boot.
 
-The per-request catalog projection includes that boot-pinned relation OID,
-owner, relation/access-method flags, RLS and inheritance flags, columns,
-constraints, triggers, ACLs, and executor-role attributes. Its domain-separated
-digest is the runtime `schemaDigest` returned as evidence. A database
-administrator remains a stated trust root.
+The per-request catalog projection is the closed
+`postgres-runtime-schema/v1` object. It includes the static contract digest and
+portable projection plus that boot-pinned relation OID, owner,
+relation/access-method flags, RLS, partition and inheritance-parent flags,
+columns, constraints, triggers, ACLs for both executor and `PUBLIC`, and
+executor-role attributes. Its evidence digest is
+`SHA-256("postgres-runtime-schema/v1" || NUL || canonical projection bytes)`.
+It is distinct from the reviewed static `postgres-schema/v1` contract digest.
+A database administrator remains a stated trust root.
 
 ### 12.3 Per-request transaction
 
@@ -915,15 +975,18 @@ returned to the pool, and the buffered result is discarded.
   for example `OPERATOR(pg_catalog.>=)`.
 - Statements are unnamed and not persisted across requests.
 - The grammar has exactly one `SELECT`, one fixed `FROM ONLY`, zero or more
-  `AND` predicates, and one server-enforced `LIMIT`.
+  `AND` predicates, the code-owned
+  `ORDER BY "customer_id" ASC`, and one server-enforced `LIMIT`.
 - No string concatenation can introduce a token from user input.
-- No `*`, comments, semicolons, functions, aliases, joins, grouping, sorting,
-  subqueries, CTEs, set operations, or locking clauses are representable.
+- No `*`, comments, semicolons, functions, aliases, joins, grouping,
+  caller-controlled sorting, subqueries, CTEs, set operations, or locking
+  clauses are representable.
 
 The database is queried with `requestedLimit + 1`. Cursor fetches are bounded and
 cumulative output is capped at 256 KiB, 5 columns, and 100 returned rows.
-The 256 KiB limit covers the UTF-8 encoded `result` JSON. Row order is explicitly
-unspecified, and v1 offers no pagination token.
+The 256 KiB limit covers the UTF-8 encoded `result` JSON. Row order is
+deterministically ascending by the reviewed unique `customer_id`; v1 exposes no
+sort option and offers no pagination token.
 
 ### 12.5 Result validation
 
@@ -952,8 +1015,9 @@ No arbitrary text cell can reach MCP structured content.
   filesystems, `no-new-privileges`, and all Linux capabilities dropped
 - Both have explicit CPU, memory, PID, file-descriptor, and separate writable
   tmpfs limits
-- The shared socket GID is a fixed deployment constant and only `context-mcp`
-  receives it as a supplementary group
+- The shared socket GID is a fixed deployment constant; both `context-mcp` and
+  `query-executor` receive it as their sole supplementary group so the executor
+  can create/chgrp the `0660` socket inside the `0710` shared directory
 - At startup, the executor rejects a non-socket object at the fixed path; it may
   replace only a stale socket with the expected owner before setting mode and
   becoming ready
@@ -961,6 +1025,9 @@ No arbitrary text cell can reach MCP structured content.
 - Metadata-only egress from `context-mcp`; no PostgreSQL route
 - DataHub child response limit: 128 KiB before allocation, concurrency 1,
   two-second deadline, fixed page limit, and fixed total-field bound
+- Executor UDS connection budget: 6,500 ms; the context client uses one
+  non-resetting 7,000 ms monotonic deadline across connect, write, response,
+  validation, and clean EOF
 - Client cancellation triggers bounded database cancellation followed by
   rollback or connection destruction
 - Cancellation closes an active DataHub call and removes any not-yet-forwarded
@@ -1038,7 +1105,10 @@ strings, arbitrary DataHub/OKF text, or raw errors.
 
 ### 15.2 Property tests
 
-- `DENY ⇒ application database query count = 0`
+- A rejection reached before `APPLICATION_QUERY_SENT` has application database
+  query count zero.
+- A rejection reached at or after `APPLICATION_QUERY_SENT` has application
+  database query count one and releases zero rows.
 - Generated identifiers are a subset of the fixed ResourceBinding.
 - Generated operators are valid for the selected API value type.
 - Generated parameter count equals placeholder count.
@@ -1054,7 +1124,9 @@ A small Lean 4 model mirrors the executor state relation and proves:
 
 - `EXECUTED` is reachable only through `AUTHORIZED`;
 - `AUTHORIZED` implies every core-invariant proposition;
-- a terminal `DENIED` trace has zero application-query transitions;
+- a terminal pre-query rejection trace has zero application-query transitions;
+- a terminal post-query rejection trace has exactly one
+  application-query-sent transition;
 - no inspection trace reaches a database state.
 
 CI rejects `sorry`, added axioms, or a Lean model whose transition names drift
