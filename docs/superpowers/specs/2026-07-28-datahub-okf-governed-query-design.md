@@ -471,6 +471,9 @@ Contract limits:
   `0.00` through `9999999999.99`
 - `ENUM`: one exact allowlisted ASCII value
 - `DATE`: canonical `YYYY-MM-DD` and a valid calendar date
+- `PROHIBITED`: exactly `{"type":"PROHIBITED"}` with no `value`; accepted only
+  for `fieldId: "email"` with `operator: "EQ"` so the policy engine can return
+  `FIELD_USE_DENIED` without receiving an email address
 - Every string has both character and UTF-8 byte limits
 - All public-contract strings are canonical ASCII; NUL, control characters,
   Unicode confusables, and non-canonical spellings are rejected
@@ -525,6 +528,10 @@ Denial or operational failure:
 Policy denials are application results, not protocol failures. Unexpected
 operational failures may set MCP `isError: true`, but they use the same fixed
 structured envelope and never expose internal error text.
+
+`PROHIBITED` is never a SQL value type. A predicate containing it must terminate
+during policy evaluation with `FIELD_USE_DENIED`, before
+`POLICY_ALLOWED_PENDING_SCHEMA`; the SQL compiler has no branch that accepts it.
 
 For every result, MCP `content` is exactly:
 
@@ -1036,6 +1043,8 @@ strings, arbitrary DataHub/OKF text, or raw errors.
 - Generated parameter count equals placeholder count.
 - No generated SQL contains forbidden grammar.
 - Every accepted decimal/date/opaque ID round-trips canonically.
+- The `email + EQ + PROHIBITED` sentinel always returns `FIELD_USE_DENIED` with
+  zero application-query transitions.
 - Any invalid output cell releases zero rows.
 
 ### 15.3 Formal transition model
@@ -1104,7 +1113,9 @@ The demo is successful only when all five conditions are shown:
 2. A `customer_id + total` query passes policy and live-schema checks and sends
    exactly one application query to real PostgreSQL.
 3. Projecting `email` and filtering on `email` each return
-   `FIELD_USE_DENIED`, with application database query count zero.
+   `FIELD_USE_DENIED`, with application database query count zero. The filter
+   demonstration uses the value-free `PROHIBITED` sentinel and never sends an
+   email address.
 4. Direct use of the executor database role cannot read `email` or `SELECT *`.
 5. DataHub outage, policy tampering, schema drift, and injection payloads all
    fail closed without fallback, partial results, or sensitive logs.
