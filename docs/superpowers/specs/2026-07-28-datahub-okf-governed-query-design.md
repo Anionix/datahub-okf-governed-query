@@ -578,7 +578,7 @@ The human-reviewed source is valid OKF v0.2 plus one namespaced extension:
 type: "Data Usage Policy"
 resource: "urn:li:dataset:(urn:li:dataPlatform:postgres,demo.analytics.customer_orders,PROD)"
 status: "stable"
-stale_after: "2026-12-31"
+stale_after: "2027-01-01"
 sources:
   - resource: "repo://governance/privacy/customer-orders"
 verified:
@@ -780,10 +780,11 @@ ENVELOPE_RECEIVED
 Only `DB_SCHEMA_VERIFIED` can emit `AUTHORIZED`, after every core-invariant term
 is true. No external message contains or can request an authorized state.
 
-Policy integrity and freshness run on every request, not only at startup. The
-effective expiry is the earlier of `expires_at` and the first UTC instant after
-the `stale_after` calendar date. It must be later than current trusted wall time
-plus the complete 5-second transaction budget; clock uncertainty denies.
+Policy integrity and freshness run on every request, not only at startup. OKF
+v0.2 treats `today >= stale_after` as stale, so this UTC profile converts
+`stale_after` to 00:00:00Z on that exact date. Effective expiry is the earlier
+of that boundary and `expires_at`. It must be later than current trusted wall
+time plus the complete 5-second transaction budget; clock uncertainty denies.
 
 No result is sent to `context-mcp` before `ROLLBACK_CONFIRMED`. Rollback failure
 or uncertain connection state destroys the client, discards all buffered rows,
