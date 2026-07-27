@@ -56,7 +56,7 @@ useful for orientation.
 
 ```text
 package.json                                  exact workspace versions and gates
-pnpm-workspace.yaml                           workspace membership
+pnpm-workspace.yaml                           workspace membership and root settings
 pnpm-lock.yaml                                exact JavaScript dependency closure
 tsconfig.json                                 workspace project references
 tsconfig.base.json                            shared strict compiler policy
@@ -203,12 +203,6 @@ toolchain, shell, SQL, or workflow script:
     "fast-check": "4.9.0",
     "typescript": "7.0.2",
     "vitest": "4.1.10"
-  },
-  "pnpm": {
-    "overrides": {
-      "@modelcontextprotocol/sdk": "1.29.0",
-      "zod": "4.4.3"
-    }
   }
 }
 ```
@@ -335,7 +329,17 @@ fixture, and an exact pinned fixture.
 packages:
   - "apps/*"
   - "packages/*"
+overrides:
+  "@modelcontextprotocol/sdk": "1.29.0"
+  "zod": "4.4.3"
 ```
+
+pnpm 11 no longer reads non-auth settings from the `pnpm` field in
+`package.json`; root settings belong in `pnpm-workspace.yaml`. The placement
+above follows the official
+[pnpm package manifest](https://pnpm.io/package_json) and
+[settings](https://pnpm.io/settings#overrides) documentation. A lockfile-only
+run that reports an ignored `pnpm.overrides` warning is a failing gate.
 
 ```json
 {
