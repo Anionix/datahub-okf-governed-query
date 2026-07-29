@@ -805,17 +805,48 @@ function importEqualsTargetReadsAuthority(reference, lexical, members) {
 function namesVisibleInScope(scope, inherited, members) {
   const names = new Set(inherited);
   const sourceIsModule = ts.isSourceFile(scope) && ts.isExternalModule(scope);
-  /**
-   * @param {import("typescript").VariableDeclaration} declaration
-   * @param {ReadonlySet<string>} [propertyNames]
-   */
-  function removeHarmless(declaration, propertyNames = members) {
+  /** @param {import("typescript").VariableDeclaration} declaration */
+  function removeHarmless(declaration) {
     if (
       (declaration.initializer === undefined ||
         !referencesVisibleAuthority(declaration.initializer, names, members)) &&
-      !bindingReadsAuthority(declaration.name, propertyNames)
+      !bindingReadsAuthority(declaration.name, members)
     ) {
       deleteBindingNames(declaration.name, names);
+    }
+  }
+  /**
+   * @param {import("typescript").BindingName} name
+   * @param {boolean} sourceCarries
+   * @param {ReadonlySet<string>} propertyNames
+   */
+  function removeHarmlessCatchBindings(name, sourceCarries, propertyNames) {
+    if (ts.isIdentifier(name)) {
+      if (sourceCarries) {
+        names.add(name.text);
+      } else {
+        names.delete(name.text);
+      }
+      return;
+    }
+    for (const element of name.elements) {
+      if (!ts.isBindingElement(element)) {
+        continue;
+      }
+      const property =
+        element.propertyName ??
+        (ts.isObjectBindingPattern(name) &&
+        element.dotDotDotToken === undefined &&
+        ts.isIdentifier(element.name)
+          ? element.name
+          : undefined);
+      const elementCarries =
+        sourceCarries ||
+        element.dotDotDotToken !== undefined ||
+        (property !== undefined && propertyReadsAuthority(property, propertyNames)) ||
+        (element.initializer !== undefined &&
+          referencesVisibleAuthority(element.initializer, propertyNames, members));
+      removeHarmlessCatchBindings(element.name, elementCarries, propertyNames);
     }
   }
   if (ts.isFunctionLike(scope)) {
@@ -824,8 +855,9 @@ function namesVisibleInScope(scope, inherited, members) {
     }
   } else if (ts.isCatchClause(scope) && scope.variableDeclaration !== undefined) {
     // Catch alias policy source: https://github.com/Anionix/datahub-okf-governed-query/issues/39
-    // Catch state: property keys are resolved against the live authority aliases.
-    removeHarmless(scope.variableDeclaration, names);
+    // Mixed binding policy source: https://github.com/Anionix/datahub-okf-governed-query/issues/44
+    // Catch state: each property is resolved independently against pre-catch aliases.
+    removeHarmlessCatchBindings(scope.variableDeclaration.name, false, new Set(names));
   } else if (
     (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
     scope.initializer !== undefined &&
