@@ -1263,7 +1263,10 @@ function expressionCarriesAuthority(expression, checker, authority, members = SI
         ? expression.expression.expression
         : undefined;
     if (bindTarget !== undefined) {
-      // A bound function retains both its callable target and every bound capability argument.
+      // Primary sources:
+      // https://tc39.es/ecma262/multipage/fundamental-objects.html#sec-function.prototype.bind
+      // https://tc39.es/ecma262/multipage/ordinary-and-exotic-objects-behaviours.html#sec-bound-function-exotic-objects
+      // Authority-state transition: binding retains the target and every bound argument.
       return (
         expressionCarriesAuthority(bindTarget, checker, authority, members) ||
         expression.arguments.some((argument) =>
