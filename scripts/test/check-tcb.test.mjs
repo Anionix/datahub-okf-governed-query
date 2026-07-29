@@ -435,6 +435,18 @@ const safeNameFixtures = [
   "namespace N { class C { static { var writeFile = safe; void writeFile; } } }",
   "namespace N { function writeFile() {} writeFile(); }",
   "namespace N { import writeFile = Safe.writeFile; void writeFile; }",
+  "const parse = safe, value = parse; void value;",
+  "const parse = safe;\nconst value = parse;\nvoid value;",
+  "export {}; void parse; if (flag) { var parse = safe; }",
+  "export {}; function parse() {} parse();",
+  "import type writeFile = Safe.value;",
+  "const writeFile = safe; function helper() { writeFile(); }",
+  "const registerTool = safe; function helper() { registerTool(); }",
+  'import writeFile from "safe"; void writeFile;',
+  'import * as writeFile from "safe"; void writeFile;',
+  'import { safe as writeFile } from "safe"; void writeFile;',
+  "const safe = 1; export { safe as writeFile };",
+  "type writeFile = string; export type { writeFile };",
 ];
 
 for (const [index, source] of safeNameFixtures.entries()) {
@@ -672,6 +684,22 @@ const unownedAuthorityFixtures = [
   {
     name: "top-level authority escape",
     source: "consume(writeFile);\n",
+  },
+  {
+    name: "classic-script var before safe assignment",
+    source: 'writeFile("x", "y", () => {});\nvar writeFile = safe;\n',
+  },
+  {
+    name: "type-only imported shadow runtime use",
+    source: 'import { type safe as writeFile } from "safe";\n' + 'writeFile("x", "y", () => {});\n',
+  },
+  {
+    name: "local authority export",
+    source: 'import { writeFile } from "node:fs";\nexport { writeFile };\n',
+  },
+  {
+    name: "aliased local authority export",
+    source: 'import { writeFile } from "node:fs";\nexport { writeFile as persist };\n',
   },
   {
     name: "registerTool alias",

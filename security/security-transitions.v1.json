@@ -26,7 +26,7 @@
       "accepts": "one lexical scope and inherited authority-name state",
       "emits": "authority names visible after runtime shadow declarations",
       "failure": "preserves inherited authority when a declaration is ambient or unsafe",
-      "invariant": "namespace scope analysis never erases runtime authority use"
+      "invariant": "lexical scope analysis never erases runtime authority use"
     },
     {
       "root": "integration",
