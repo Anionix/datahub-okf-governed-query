@@ -768,6 +768,22 @@ function referencesVisibleAuthority(node, lexical, members) {
   return found;
 }
 
+/**
+ * @param {import("typescript").ModuleReference} reference
+ * @param {ReadonlySet<string>} lexical
+ * @param {ReadonlySet<string>} members
+ */
+function importEqualsTargetReadsAuthority(reference, lexical, members) {
+  if (!ts.isQualifiedName(reference)) {
+    return referencesVisibleAuthority(reference, lexical, members);
+  }
+  return (
+    members.has(reference.right.text) ||
+    lexical.has(reference.right.text) ||
+    referencesVisibleAuthority(reference.left, lexical, members)
+  );
+}
+
 // Scope semantics:
 // https://tc39.es/ecma262/#sec-globaldeclarationinstantiation
 // https://tc39.es/ecma262/#sec-moduledeclarationinstantiation
@@ -888,13 +904,23 @@ function namesVisibleInScope(scope, inherited, members) {
       ) {
         const runtimeShadow =
           !ts.isSourceFile(scope) || sourceIsModule || ts.isClassDeclaration(statement);
+        const namespaceImportCarriesAuthority =
+          ts.isModuleBlock(scope) &&
+          ts.isImportEqualsDeclaration(statement) &&
+          importEqualsTargetReadsAuthority(statement.moduleReference, names, members);
         if (
           runtimeShadow &&
           !isAmbientContext(statement) &&
           statement.name !== undefined &&
           ts.isIdentifier(statement.name)
         ) {
-          names.delete(statement.name.text);
+          // Namespace import-equals policy source:
+          // https://github.com/Anionix/datahub-okf-governed-query/issues/41
+          if (namespaceImportCarriesAuthority) {
+            names.add(statement.name.text);
+          } else {
+            names.delete(statement.name.text);
+          }
         }
       } else if (
         ts.isVariableStatement(statement) &&
