@@ -286,6 +286,11 @@ const forbiddenFixtures = [
   { name: "top-level nested shadow", source: "{writeFile();{const writeFile=safe;}}" },
   { name: "shorthand sink", source: "function f(){const {writeFile}=fs;writeFile();}" },
   { name: "for-of shorthand", source: "function f(xs){for(const {writeFile} of xs)writeFile();}" },
+  { name: "object shorthand sink", source: "function f(){const options={parse};void options;}" },
+  {
+    name: "object value sink",
+    source: "function f(){const options={handler:parse};void options;}",
+  },
 ];
 
 for (const fixture of forbiddenFixtures) {
@@ -311,6 +316,7 @@ const safeNameFixtures = [
   "function f(){try{}catch(writeFile){void writeFile;}}",
   "function f(){function writeFile(){}writeFile();}",
   "function f(v){switch(v){case 0:const writeFile=safe;void writeFile;}}",
+  "function f(){const options={parse:false};void options;}",
 ];
 
 for (const [index, source] of safeNameFixtures.entries()) {

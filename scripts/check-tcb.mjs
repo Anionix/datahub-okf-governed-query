@@ -544,6 +544,8 @@ function hasNamedBoundary(node) {
   );
 }
 
+// Object literal key evaluation source:
+// https://tc39.es/ecma262/2026/multipage/ecmascript-language-expressions.html#sec-runtime-semantics-propertydefinitionevaluation
 /** @param {import("typescript").Identifier} node */
 function isNonRuntimeIdentifier(node) {
   const parent = node.parent;
@@ -558,6 +560,7 @@ function isNonRuntimeIdentifier(node) {
       ts.isBindingElement(parent) ||
       ts.isImportSpecifier(parent)) &&
       parent.name === node) ||
+    (ts.isPropertyAssignment(parent) && parent.name === node) ||
     (ts.isBindingElement(parent) && parent.propertyName === node) ||
     (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
     ts.isImportClause(parent) ||
