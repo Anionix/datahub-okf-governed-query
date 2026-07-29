@@ -400,23 +400,25 @@ function addIdentifierNames(node, names) {
   return changed;
 }
 
-/** @param {import("typescript").Node} node @param {Set<string>} names */
-function deleteIdentifierNames(node, names) {
-  /** @param {import("typescript").Node} child */
-  function visit(child) {
-    if (ts.isIdentifier(child)) {
-      names.delete(child.text);
+/** @param {import("typescript").BindingName} name @param {Set<string>} names */
+function deleteBindingNames(name, names) {
+  if (ts.isIdentifier(name)) {
+    names.delete(name.text);
+  } else {
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) {
+        deleteBindingNames(element.name, names);
+      }
     }
-    ts.forEachChild(child, visit);
   }
-  visit(node);
 }
 
 /**
  * @param {import("typescript").Node} boundary
  * @param {ReadonlySet<string>} seeds
+ * @param {boolean} [preserveShadows]
  */
-function collectAuthorityNames(boundary, seeds) {
+function collectAuthorityNames(boundary, seeds, preserveShadows = false) {
   const names = new Set(seeds);
   /** @param {import("typescript").Node} node */
   function removeSafeShadows(node) {
@@ -424,17 +426,19 @@ function collectAuthorityNames(boundary, seeds) {
       return;
     }
     if (ts.isParameter(node)) {
-      deleteIdentifierNames(node.name, names);
+      deleteBindingNames(node.name, names);
     } else if (
       ts.isVariableDeclaration(node) &&
       node.initializer !== undefined &&
       !referencesAuthority(node.initializer, seeds)
     ) {
-      deleteIdentifierNames(node.name, names);
+      deleteBindingNames(node.name, names);
     }
     ts.forEachChild(node, removeSafeShadows);
   }
-  removeSafeShadows(boundary);
+  if (!preserveShadows) {
+    removeSafeShadows(boundary);
+  }
   for (let changed = true; changed; ) {
     changed = false;
     /** @param {import("typescript").Node} node */
@@ -554,6 +558,8 @@ function isNonRuntimeIdentifier(node) {
       ts.isBindingElement(parent) ||
       ts.isImportSpecifier(parent)) &&
       parent.name === node) ||
+    (ts.isBindingElement(parent) && parent.propertyName === node) ||
+    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
     ts.isImportClause(parent) ||
     ts.isNamespaceImport(parent)
   ) {
@@ -569,29 +575,171 @@ function isNonRuntimeIdentifier(node) {
   return false;
 }
 
-/** @param {import("typescript").Node} boundary @param {ReadonlySet<string>} sinkSeeds */
-function containsSink(boundary, sinkSeeds) {
-  const sinkNames = collectAuthorityNames(boundary, sinkSeeds);
+/** @param {import("typescript").BindingName} name @param {ReadonlySet<string>} members @returns {boolean} */
+function bindingReadsAuthority(name, members) {
+  if (ts.isIdentifier(name)) {
+    return false;
+  }
+  for (const element of name.elements) {
+    if (!ts.isBindingElement(element)) {
+      continue;
+    }
+    const property =
+      element.propertyName ??
+      (ts.isObjectBindingPattern(name) &&
+      element.dotDotDotToken === undefined &&
+      ts.isIdentifier(element.name)
+        ? element.name
+        : undefined);
+    if (
+      (property !== undefined &&
+        (ts.isIdentifier(property) || ts.isStringLiteral(property)) &&
+        members.has(property.text)) ||
+      bindingReadsAuthority(element.name, members)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** @param {import("typescript").Node} node @param {ReadonlySet<string>} members */
+function isAuthorityMember(node, members) {
+  return (
+    (ts.isPropertyAccessExpression(node) && members.has(node.name.text)) ||
+    (ts.isElementAccessExpression(node) &&
+      node.argumentExpression !== undefined &&
+      ts.isStringLiteral(node.argumentExpression) &&
+      members.has(node.argumentExpression.text))
+  );
+}
+
+/** @param {import("typescript").Node} node @param {ReadonlySet<string>} lexical @param {ReadonlySet<string>} members */
+function referencesVisibleAuthority(node, lexical, members) {
   let found = false;
-  /** @param {import("typescript").Node} node */
-  function visit(node) {
+  /** @param {import("typescript").Node} child */
+  function visit(child) {
+    if (
+      isAuthorityMember(child, members) ||
+      (ts.isIdentifier(child) && lexical.has(child.text) && !isNonRuntimeIdentifier(child))
+    ) {
+      found = true;
+    } else if (!found) {
+      ts.forEachChild(child, visit);
+    }
+  }
+  visit(node);
+  return found;
+}
+
+// Scope semantics:
+// https://tc39.es/ecma262/#sec-functiondeclarationinstantiation
+// https://tc39.es/ecma262/#sec-blockdeclarationinstantiation
+// https://tc39.es/ecma262/2026/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-catchclauseevaluation
+// https://tc39.es/ecma262/2026/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-forin-div-ofheadevaluation
+// https://tc39.es/ecma262/2026/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-forin-div-ofbodyevaluation
+/** @param {import("typescript").Node} scope @param {ReadonlySet<string>} inherited @param {ReadonlySet<string>} members */
+function namesVisibleInScope(scope, inherited, members) {
+  const names = new Set(inherited);
+  /** @param {import("typescript").VariableDeclaration} declaration */
+  function removeHarmless(declaration) {
+    if (
+      (declaration.initializer === undefined ||
+        !referencesVisibleAuthority(declaration.initializer, names, members)) &&
+      !bindingReadsAuthority(declaration.name, members)
+    ) {
+      deleteBindingNames(declaration.name, names);
+    }
+  }
+  if (ts.isFunctionLike(scope)) {
+    for (const parameter of scope.parameters) {
+      deleteBindingNames(parameter.name, names);
+    }
+  } else if (ts.isCatchClause(scope) && scope.variableDeclaration !== undefined) {
+    deleteBindingNames(scope.variableDeclaration.name, names);
+  } else if (
+    (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
+    scope.initializer !== undefined &&
+    ts.isVariableDeclarationList(scope.initializer)
+  ) {
+    for (const declaration of scope.initializer.declarations) {
+      removeHarmless(declaration);
+    }
+  } else if (ts.isBlock(scope) || ts.isCaseBlock(scope)) {
+    if (
+      ts.isBlock(scope) &&
+      ts.isFunctionLike(scope.parent) &&
+      "body" in scope.parent &&
+      scope.parent.body === scope
+    ) {
+      /** @param {import("typescript").Node} node */
+      function removeFunctionVariables(node) {
+        if (node !== scope && ts.isFunctionLike(node)) {
+          return;
+        }
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isVariableDeclarationList(node.parent) &&
+          (node.parent.flags & ts.NodeFlags.BlockScoped) === 0
+        ) {
+          removeHarmless(node);
+        }
+        ts.forEachChild(node, removeFunctionVariables);
+      }
+      removeFunctionVariables(scope);
+    }
+    const statements = ts.isBlock(scope)
+      ? scope.statements
+      : scope.clauses.flatMap((clause) => [...clause.statements]);
+    for (const statement of statements) {
+      if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
+        if (statement.name !== undefined) {
+          names.delete(statement.name.text);
+        }
+      } else if (
+        ts.isVariableStatement(statement) &&
+        (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0
+      ) {
+        for (const declaration of statement.declarationList.declarations) {
+          removeHarmless(declaration);
+        }
+      }
+    }
+  }
+  return names;
+}
+
+/** @param {import("typescript").Node} boundary @param {ReadonlySet<string>} sinkSeeds @param {ReadonlySet<string>} [memberSeeds] @param {"runtime" | "syntax"} [mode] */
+function containsSink(boundary, sinkSeeds, memberSeeds = SINK_NAMES, mode = "runtime") {
+  const sinkNames = collectAuthorityNames(boundary, sinkSeeds, true);
+  let found = false;
+  /** @param {import("typescript").Node} node @param {ReadonlySet<string>} visible */
+  function visit(node, visible) {
     if (found || (node !== boundary && ts.isFunctionLike(node) && hasNamedBoundary(node))) {
       return;
     }
-    if (ts.isIdentifier(node) && sinkNames.has(node.text) && !isNonRuntimeIdentifier(node)) {
+    const scoped = namesVisibleInScope(node, visible, memberSeeds);
+    if (
+      isAuthorityMember(node, memberSeeds) ||
+      (ts.isIdentifier(node) &&
+        scoped.has(node.text) &&
+        (mode === "syntax" || !isNonRuntimeIdentifier(node)))
+    ) {
       found = true;
       return;
     }
-    if (ts.isCallExpression(node)) {
-      const name = calledName(node);
-      if (name !== undefined && sinkNames.has(name)) {
-        found = true;
-        return;
-      }
+    if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      ts.isVariableDeclarationList(node.initializer)
+    ) {
+      visit(node.initializer, scoped);
+      visit(node.expression, visible);
+      visit(node.statement, scoped);
+      return;
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(node, (child) => visit(child, scoped));
   }
-  visit(boundary);
+  visit(boundary, sinkNames);
   return found;
 }
 
@@ -821,23 +969,20 @@ function inspectFile(file) {
   rejectForbidden(sourceFile);
 
   const unownedSeeds = new Set([...sinkSeeds, ...registerSeeds]);
+  const unownedMembers = new Set([...SINK_NAMES, ...REGISTER_NAMES]);
   for (const statement of sourceFile.statements) {
-    if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
+    if (
+      ts.isImportDeclaration(statement) ||
+      ts.isExportDeclaration(statement) ||
+      (ts.isFunctionLike(statement) && hasNamedBoundary(statement))
+    ) {
       continue;
     }
-    const authorityNames = collectAuthorityNames(statement, unownedSeeds);
-    /** @param {import("typescript").Node} node */
-    function rejectUnowned(node) {
-      if (ts.isFunctionLike(node) && hasNamedBoundary(node)) {
-        return;
-      }
-      if (ts.isIdentifier(node) && authorityNames.has(node.text)) {
-        const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
-        fail(file.path, line, "TopLevelAuthority");
-      }
-      ts.forEachChild(node, rejectUnowned);
+    if (containsSink(statement, unownedSeeds, unownedMembers, "syntax")) {
+      const line =
+        sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1;
+      fail(file.path, line, "TopLevelAuthority");
     }
-    rejectUnowned(statement);
   }
   return {
     root: file.root,
