@@ -546,10 +546,86 @@ function hasNamedBoundary(node) {
 
 // Object literal key evaluation source:
 // https://tc39.es/ecma262/2026/multipage/ecmascript-language-expressions.html#sec-runtime-semantics-propertydefinitionevaluation
+// Type erasure source:
+// https://www.typescriptlang.org/docs/handbook/2/basic-types.html#erased-types
+// Type-only class members:
+// https://www.typescriptlang.org/docs/handbook/2/classes.html#type-only-field-declarations
+// https://www.typescriptlang.org/docs/handbook/2/classes.html#abstract-classes-and-members
+// Runtime class definition source:
+// https://tc39.es/ecma262/2026/multipage/ecmascript-language-functions-and-classes.html#sec-runtime-semantics-classdefinitionevaluation
+/** @param {import("typescript").Node} node */
+function isAmbientContext(node) {
+  let current = node;
+  while (!ts.isSourceFile(current)) {
+    if (
+      ts.canHaveModifiers(current) &&
+      ts.getModifiers(current)?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword)
+    ) {
+      return true;
+    }
+    current = current.parent;
+  }
+  return current.isDeclarationFile;
+}
+
+/** @param {import("typescript").Node} node */
+function occursOnlyInErasedSyntax(node) {
+  if (isAmbientContext(node)) {
+    return true;
+  }
+  /** @type {import("typescript").Node} */
+  let child = node;
+  let current = node.parent;
+  while (!ts.isSourceFile(current)) {
+    if (
+      ts.isExpressionWithTypeArguments(current) &&
+      current.expression === child &&
+      ts.isHeritageClause(current.parent) &&
+      current.parent.token === ts.SyntaxKind.ExtendsKeyword &&
+      ts.isClassLike(current.parent.parent)
+    ) {
+      return isAmbientContext(current.parent.parent);
+    }
+    if (ts.isComputedPropertyName(child) && "name" in current && current.name === child) {
+      if (ts.isObjectLiteralElementLike(current) && ts.isObjectLiteralExpression(current.parent)) {
+        return false;
+      }
+      if (ts.isClassElement(current) && ts.isClassLike(current.parent)) {
+        return (
+          isAmbientContext(current) ||
+          (ts.getCombinedModifierFlags(current) & ts.ModifierFlags.Abstract) !== 0
+        );
+      }
+    }
+    if (
+      ts.isDecorator(current) ||
+      ((ts.isParameter(current) || ts.isPropertyDeclaration(current)) &&
+        current.initializer === child)
+    ) {
+      return false;
+    }
+    if (
+      ts.isTypeNode(current) ||
+      ts.isTypeElement(current) ||
+      ts.isTypeAliasDeclaration(current) ||
+      ts.isInterfaceDeclaration(current) ||
+      ts.isTypeParameterDeclaration(current)
+    ) {
+      return true;
+    }
+    if (ts.isStatement(current)) {
+      return false;
+    }
+    child = current;
+    current = current.parent;
+  }
+  return false;
+}
+
 /** @param {import("typescript").Identifier} node */
 function isNonRuntimeIdentifier(node) {
   const parent = node.parent;
-  if (
+  return (
     ((ts.isParameter(parent) ||
       ts.isVariableDeclaration(parent) ||
       ts.isFunctionDeclaration(parent) ||
@@ -564,29 +640,9 @@ function isNonRuntimeIdentifier(node) {
     (ts.isBindingElement(parent) && parent.propertyName === node) ||
     (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
     ts.isImportClause(parent) ||
-    ts.isNamespaceImport(parent)
-  ) {
-    return true;
-  }
-  // Type erasure source:
-  // https://www.typescriptlang.org/docs/handbook/2/basic-types.html#erased-types
-  let current = parent;
-  while (!ts.isSourceFile(current)) {
-    if (
-      ts.isTypeNode(current) ||
-      ts.isTypeElement(current) ||
-      ts.isTypeAliasDeclaration(current) ||
-      ts.isInterfaceDeclaration(current) ||
-      ts.isTypeParameterDeclaration(current)
-    ) {
-      return true;
-    }
-    if (ts.isStatement(current) || ts.isExpression(current)) {
-      return false;
-    }
-    current = current.parent;
-  }
-  return false;
+    ts.isNamespaceImport(parent) ||
+    occursOnlyInErasedSyntax(node)
+  );
 }
 
 /** @param {import("typescript").BindingName} name @param {ReadonlySet<string>} members @returns {boolean} */
@@ -620,11 +676,12 @@ function bindingReadsAuthority(name, members) {
 /** @param {import("typescript").Node} node @param {ReadonlySet<string>} members */
 function isAuthorityMember(node, members) {
   return (
-    (ts.isPropertyAccessExpression(node) && members.has(node.name.text)) ||
-    (ts.isElementAccessExpression(node) &&
-      node.argumentExpression !== undefined &&
-      ts.isStringLiteral(node.argumentExpression) &&
-      members.has(node.argumentExpression.text))
+    ((ts.isPropertyAccessExpression(node) && members.has(node.name.text)) ||
+      (ts.isElementAccessExpression(node) &&
+        node.argumentExpression !== undefined &&
+        ts.isStringLiteral(node.argumentExpression) &&
+        members.has(node.argumentExpression.text))) &&
+    !occursOnlyInErasedSyntax(node)
   );
 }
 

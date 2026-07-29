@@ -301,6 +301,43 @@ const forbiddenFixtures = [
     name: "object value sink",
     source: "function f(){const options={handler:parse};void options;}",
   },
+  { name: "runtime class heritage", source: "class Child extends execute {}\n" },
+  {
+    name: "runtime parenthesized class heritage",
+    source: "class Child extends (execute) {}\n",
+  },
+  {
+    name: "runtime call class heritage",
+    source: "class Child extends execute() {}\n",
+  },
+  {
+    name: "runtime nested class heritage",
+    source: "class Child extends execute({ [writeFile]: 1 }) {}\n",
+  },
+  {
+    name: "runtime computed getter",
+    source: "class Child { get [writeFile](): number { return 1; } }\n",
+  },
+  {
+    name: "runtime computed setter",
+    source: "class Child { set [writeFile](value: number) { void value; } }\n",
+  },
+  {
+    name: "runtime object computed getter",
+    source: "const child = { get [writeFile](): number { return 1; } };\n",
+  },
+  {
+    name: "runtime object computed setter",
+    source: "const child = { set [writeFile](value: number) { void value; } };\n",
+  },
+  {
+    name: "runtime getter decorator",
+    source: "class Child { @decorate(writeFile) get value(): number { return 1; } }\n",
+  },
+  {
+    name: "runtime setter decorator",
+    source: "class Child { @decorate(writeFile) set value(next: number) { void next; } }\n",
+  },
 ];
 
 for (const fixture of forbiddenFixtures) {
@@ -525,6 +562,18 @@ const typeOnlyAuthorityFixtures = [
   "interface Artifact { digest: string }\n",
   "type digest = string;\n",
   "function helper<digest>(value: digest): void { void value; }\n",
+  "interface Child extends execute {}\n",
+  "class Child implements execute {}\n",
+  "interface Child extends authority.execute {}\n",
+  "class Child implements authority.execute {}\n",
+  "declare class Child extends execute {}\n",
+  "abstract class Child { abstract get [writeFile](): number }\n",
+  "class Child { declare [writeFile]: number }\n",
+  "declare class Child extends (execute) {}\n",
+  "abstract class Child { abstract get [(writeFile)](): number }\n",
+  "class Child { declare [(writeFile)]: number }\n",
+  "declare class Base {}\ndeclare function execute(): typeof Base;\ndeclare class Child extends execute() {}\n",
+  "declare class Base {}\ndeclare function execute(value: unknown): typeof Base;\ndeclare const writeFile: string;\ndeclare class Child extends execute({ [writeFile]: 1 }) {}\n",
 ];
 
 for (const [index, source] of typeOnlyAuthorityFixtures.entries()) {
