@@ -226,6 +226,16 @@ const contractRejections = [
     manifest: manifest([entry()]),
     files: { [sourcePath]: contract + transitionSource },
   },
+  {
+    name: "single-line block LLM-CONTRACT marker",
+    manifest: manifest([]),
+    files: { [sourcePath]: "/* LLM-CONTRACT: unregistered */\nfunction helper(): void {}\n" },
+  },
+  {
+    name: "multiline block LLM-CONTRACT marker",
+    manifest: manifest([]),
+    files: { [sourcePath]: "/*\n * LLM-CONTRACT:\n */\nfunction helper(): void {}\n" },
+  },
 ];
 
 for (const { name, ...fixture } of contractRejections) {

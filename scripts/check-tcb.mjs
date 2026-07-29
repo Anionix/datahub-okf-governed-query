@@ -847,6 +847,18 @@ function inspectFile(file) {
   }
   const headers = [];
   const lines = text.split("\n");
+  const commentRanges = new Set();
+  /** @type {ts.Node[]} */
+  const nodes = [sourceFile];
+  for (const node of nodes) {
+    for (const range of [
+      ...(ts.getLeadingCommentRanges(text, node.pos) ?? []),
+      ...(ts.getTrailingCommentRanges(text, node.end) ?? []),
+    ]) {
+      commentRanges.add(`${range.pos}:${range.end}`);
+    }
+    nodes.push(...node.getChildren(sourceFile));
+  }
   const scanner = ts.createScanner(
     ts.ScriptTarget.Latest,
     false,
@@ -860,13 +872,18 @@ function inspectFile(file) {
     ) {
       continue;
     }
+    if (!commentRanges.has(`${scanner.getTokenPos()}:${scanner.getTextPos()}`)) {
+      continue;
+    }
     const comment = scanner.getTokenText();
     const line = sourceFile.getLineAndCharacterOfPosition(scanner.getTokenPos()).line;
-    if (
-      token === ts.SyntaxKind.SingleLineCommentTrivia &&
-      comment.includes("LLM-CONTRACT") &&
-      /^[ \t]*\/\/.*LLM-CONTRACT/u.test(lines[line] ?? "")
-    ) {
+    if (comment.includes("LLM-CONTRACT")) {
+      if (
+        token !== ts.SyntaxKind.SingleLineCommentTrivia ||
+        !/^[ \t]*\/\/ LLM-CONTRACT:$/u.test(lines[line] ?? "")
+      ) {
+        fail(file.path, line + 1, "ContractCommentForm");
+      }
       headers.push(line);
     }
     if (/@ts-ignore\b/u.test(comment)) {
