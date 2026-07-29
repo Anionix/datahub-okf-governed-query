@@ -22,6 +22,15 @@
     {
       "root": "integration",
       "path": "scripts/check-tcb.mjs",
+      "symbol": "namesVisibleInScope",
+      "accepts": "one lexical scope and inherited authority-name state",
+      "emits": "authority names visible after runtime shadow declarations",
+      "failure": "preserves inherited authority when a declaration is ambient or unsafe",
+      "invariant": "namespace scope analysis never erases runtime authority use"
+    },
+    {
+      "root": "integration",
+      "path": "scripts/check-tcb.mjs",
       "symbol": "parseManifest",
       "accepts": "raw manifest text from the selected repository",
       "emits": "a closed sorted transition manifest",

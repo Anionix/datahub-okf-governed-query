@@ -738,7 +738,15 @@ function referencesVisibleAuthority(node, lexical, members) {
 // https://tc39.es/ecma262/2026/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-catchclauseevaluation
 // https://tc39.es/ecma262/2026/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-forin-div-ofheadevaluation
 // https://tc39.es/ecma262/2026/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-forin-div-ofbodyevaluation
+// https://www.typescriptlang.org/docs/handbook/namespaces.html
+// https://www.typescriptlang.org/docs/handbook/modules/reference.html#type-only-imports-and-exports
+// https://www.typescriptlang.org/docs/handbook/2/functions.html#function-overloads
 /** @param {import("typescript").Node} scope @param {ReadonlySet<string>} inherited @param {ReadonlySet<string>} members */
+// LLM-CONTRACT:
+// Accepts: one lexical scope and inherited authority-name state
+// Emits: authority names visible after runtime shadow declarations
+// Failure: preserves inherited authority when a declaration is ambient or unsafe
+// Invariant: namespace scope analysis never erases runtime authority use
 function namesVisibleInScope(scope, inherited, members) {
   const names = new Set(inherited);
   /** @param {import("typescript").VariableDeclaration} declaration */
@@ -765,40 +773,58 @@ function namesVisibleInScope(scope, inherited, members) {
     for (const declaration of scope.initializer.declarations) {
       removeHarmless(declaration);
     }
-  } else if (ts.isBlock(scope) || ts.isCaseBlock(scope)) {
+  } else if (ts.isBlock(scope) || ts.isCaseBlock(scope) || ts.isModuleBlock(scope)) {
     if (
-      ts.isBlock(scope) &&
-      ts.isFunctionLike(scope.parent) &&
-      "body" in scope.parent &&
-      scope.parent.body === scope
+      ts.isModuleBlock(scope) ||
+      (ts.isBlock(scope) &&
+        ((ts.isFunctionLike(scope.parent) &&
+          "body" in scope.parent &&
+          scope.parent.body === scope) ||
+          (ts.isClassStaticBlockDeclaration(scope.parent) && scope.parent.body === scope)))
     ) {
       /** @param {import("typescript").Node} node */
-      function removeFunctionVariables(node) {
-        if (node !== scope && ts.isFunctionLike(node)) {
+      function removeHoistedVariables(node) {
+        if (
+          node !== scope &&
+          (ts.isFunctionLike(node) || ts.isClassLike(node) || ts.isModuleBlock(node))
+        ) {
           return;
         }
         if (
           ts.isVariableDeclaration(node) &&
           ts.isVariableDeclarationList(node.parent) &&
-          (node.parent.flags & ts.NodeFlags.BlockScoped) === 0
+          (node.parent.flags & ts.NodeFlags.BlockScoped) === 0 &&
+          !isAmbientContext(node)
         ) {
           removeHarmless(node);
         }
-        ts.forEachChild(node, removeFunctionVariables);
+        ts.forEachChild(node, removeHoistedVariables);
       }
-      removeFunctionVariables(scope);
+      removeHoistedVariables(scope);
     }
-    const statements = ts.isBlock(scope)
-      ? scope.statements
-      : scope.clauses.flatMap((clause) => [...clause.statements]);
+    const statements = ts.isCaseBlock(scope)
+      ? scope.clauses.flatMap((clause) => [...clause.statements])
+      : scope.statements;
     for (const statement of statements) {
-      if (ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement)) {
-        if (statement.name !== undefined) {
+      if (
+        (ts.isFunctionDeclaration(statement) && statement.body !== undefined) ||
+        ts.isClassDeclaration(statement) ||
+        ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement) ||
+        (ts.isImportEqualsDeclaration(statement) && !statement.isTypeOnly)
+      ) {
+        if (
+          !isAmbientContext(statement) &&
+          statement.name !== undefined &&
+          ts.isIdentifier(statement.name)
+        ) {
           names.delete(statement.name.text);
         }
       } else if (
         ts.isVariableStatement(statement) &&
-        (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0
+        !isAmbientContext(statement) &&
+        (ts.isModuleBlock(scope) ||
+          (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0)
       ) {
         for (const declaration of statement.declarationList.declarations) {
           removeHarmless(declaration);

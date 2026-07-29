@@ -430,6 +430,11 @@ const safeNameFixtures = [
   "function f(){function writeFile(){}writeFile();}",
   "function f(v){switch(v){case 0:const writeFile=safe;void writeFile;}}",
   "function f(){const options={parse:false};void options;}",
+  "namespace N { const writeFile = safe; void writeFile; }",
+  "namespace N { void writeFile; if (flag) { var writeFile = safe; } }",
+  "namespace N { class C { static { var writeFile = safe; void writeFile; } } }",
+  "namespace N { function writeFile() {} writeFile(); }",
+  "namespace N { import writeFile = Safe.writeFile; void writeFile; }",
 ];
 
 for (const [index, source] of safeNameFixtures.entries()) {
@@ -733,7 +738,7 @@ for (const fixture of unownedAuthorityFixtures) {
   });
 }
 
-test("detects namespace direct authority use", (context) => {
+test("detects imported namespace member authority use", (context) => {
   assertRejected(
     runFixture(context, {
       manifest: manifest([]),
@@ -745,6 +750,55 @@ test("detects namespace direct authority use", (context) => {
     }),
   );
 });
+
+test("detects direct authority use inside a namespace", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([]),
+    files: { [sourcePath]: "namespace N { writeFile(); }\n" },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /TopLevelAuthority/u);
+});
+
+test("detects authority use behind an erased namespace declaration", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([]),
+    files: {
+      [sourcePath]:
+        'import { writeFile } from "node:fs";\n' +
+        "namespace N {\n" +
+        '  declare const writeFile: typeof import("node:fs").writeFile;\n' +
+        '  writeFile("x", "y", () => {});\n' +
+        "}\n",
+    },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /TopLevelAuthority/u);
+});
+
+/** @type {readonly (readonly [string, string])[]} */
+const erasedNamespaceShadowFixtures = [
+  ["type-only import-equals", "  import type writeFile = Safe.Type;\n"],
+  ["bodyless overload", "  function writeFile(): void;\n"],
+];
+
+for (const [name, declaration] of erasedNamespaceShadowFixtures) {
+  test(`detects authority behind a namespace ${name}`, (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([]),
+      files: {
+        [sourcePath]:
+          'import { writeFile } from "node:fs";\n' +
+          "namespace N {\n" +
+          declaration +
+          '  writeFile("x", "y", () => {});\n' +
+          "}\n",
+      },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /TopLevelAuthority/u);
+  });
+}
 
 test("detects static string authority element invocation", (context) => {
   assertRejected(
