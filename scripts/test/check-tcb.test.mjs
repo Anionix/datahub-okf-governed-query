@@ -55,6 +55,11 @@ function exportedSource(symbol) {
   return `${contract}export function ${symbol}(): void {}\n`;
 }
 
+/** @param {string} body @param {string} [parameters] */
+function outerOnlySource(body, parameters = "") {
+  return `${contract}function outer(${parameters}): void {\n${body}\n}\n`;
+}
+
 /**
  * @param {import("node:test").TestContext} context
  * @param {Fixture} fixture
@@ -671,6 +676,145 @@ test("keeps a nested named authority boundary separate", (context) => {
     }),
   );
 });
+
+/** @type {readonly (readonly [string, string, string?])[]} */
+const nestedAliasRejections = [
+  ["direct alias", "const run = writeFile;\nfunction inner(): void { run(); }"],
+  [
+    "transitive alias",
+    "const first = writeFile;\nconst second = first;\nfunction inner(): void { second(); }",
+  ],
+  ["later assignment", "let run = safe;\nrun = writeFile;\nfunction inner(): void { run(); }"],
+  ["logical alias", "const run = writeFile || safe;\nfunction inner(): void { run(); }"],
+  ["logical assignment", "let run = safe;\nrun ||= writeFile;\nfunction inner(): void { run(); }"],
+  ["destructured property", "const { writeFile: run } = input;\nfunction inner(): void { run(); }"],
+  [
+    "object binding default",
+    "const { value: run = writeFile } = input;\nfunction inner(): void { run(); }",
+  ],
+  ["array binding default", "const [run = writeFile] = input;\nfunction inner(): void { run(); }"],
+  ["parameter default", "function inner(): void { run(); }", "run = writeFile"],
+  [
+    "catch binding",
+    "try { safe(); } catch ({ writeFile: run }) { function inner(): void { run(); } }",
+  ],
+  ["for-of value", "for (const run of [writeFile]) { function inner(): void { run(); } }"],
+  [
+    "object carrier",
+    "const holder = { run: writeFile };\nfunction inner(): void { holder.run(); }",
+  ],
+  [
+    "property assignment",
+    "const holder = {};\nholder.run = writeFile;\nfunction inner(): void { holder.run(); }",
+  ],
+  [
+    "spread assignment",
+    "let run = safe;\n({ ...run } = { cap: writeFile });\nfunction inner(): void { run(); }",
+  ],
+  ["opaque call result", "const run = identity(writeFile);\nfunction inner(): void { run(); }"],
+];
+
+for (const [name, body, parameters] of nestedAliasRejections) {
+  test(`rejects nested ${name} without its own registration`, (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([entry(sourcePath, "outer")]),
+      files: { [sourcePath]: outerOnlySource(body, parameters) },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /MissingRegistration/u);
+  });
+}
+
+test("rejects a nested classic-script global before its var assignment", (context) => {
+  for (const declaration of ["var writeFile = safe;", "if (flag) { var writeFile = safe; }"]) {
+    const result = runFixture(context, {
+      manifest: manifest([entry(sourcePath, "outer")]),
+      files: {
+        [sourcePath]:
+          outerOnlySource("void digest;\nfunction inner(): void { writeFile(); }\ninner();") +
+          `outer();\n${declaration}\n`,
+      },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /MissingRegistration/u);
+  }
+});
+
+for (const declaration of [
+  'import type writeFile from "./safe.js";\n',
+  'import type * as writeFile from "./safe.js";\n',
+]) {
+  test("rejects a nested runtime use behind a type-only import", (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([entry(sourcePath, "outer")]),
+      files: {
+        [sourcePath]:
+          declaration + outerOnlySource("void digest;\nfunction inner(): void { writeFile(); }"),
+      },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /MissingRegistration/u);
+  });
+}
+
+test("rejects a nested authority carried through this", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([entry(sourcePath, "outer")]),
+    files: {
+      [sourcePath]:
+        "class Holder {\n" +
+        "  run = safe;\n" +
+        contract +
+        "  outer(): void {\n" +
+        "    this.run = writeFile;\n" +
+        "  }\n" +
+        "  inner(): void { this.run(); }\n" +
+        "}\n",
+    },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /MissingRegistration/u);
+});
+
+test("rejects a registerTool alias captured by a nested boundary", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([]),
+    files: {
+      [sourcePath]:
+        "function outer(): void {\n" +
+        "  const register = server.registerTool.bind(server);\n" +
+        '  function inner(): void { register("query", {}, handler); }\n' +
+        "}\n",
+    },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /CallExpression/u);
+});
+
+/** @type {readonly (readonly [string, string])[]} */
+const nestedAliasControls = [
+  ["lexical shadow", "const run = writeFile;\nfunction inner(): void { const run = safe; run(); }"],
+  ["parameter shadow", "const run = writeFile;\nfunction inner(run: Safe): void { run(); }"],
+  ["TDZ shadow", "const run = writeFile;\nfunction inner(): void { void run; const run = safe; }"],
+  ["var hoist shadow", "const run = writeFile;\nfunction inner(): void { run(); var run = safe; }"],
+  ["for-in key", "for (const run in writeFile) { function inner(): void { run.trim(); } }"],
+  ["authority call result", "const run = writeFile();\nfunction inner(): void { void run; }"],
+  [
+    "namespace runtime shadow",
+    "void writeFile;\nnamespace N { const writeFile = safe; function inner(): void { writeFile(); } }",
+  ],
+];
+
+for (const [name, body] of nestedAliasControls) {
+  test(`accepts nested ${name}`, (context) => {
+    assertAccepted(
+      runFixture(context, {
+        manifest: manifest([entry(sourcePath, "outer")]),
+        files: { [sourcePath]: outerOnlySource(body) },
+      }),
+    );
+  });
+}
 
 const unownedAuthorityFixtures = [
   {

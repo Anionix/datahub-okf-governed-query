@@ -13,6 +13,24 @@
     {
       "root": "integration",
       "path": "scripts/check-tcb.mjs",
+      "symbol": "collectAuthorityBindings",
+      "accepts": "one bound TypeScript source file and its isolated public type checker",
+      "emits": "the least fixed point of runtime authority-bearing lexical bindings",
+      "failure": "conservatively propagates opaque authority values instead of erasing them",
+      "invariant": "binding identity never collapses distinct lexical shadows by name"
+    },
+    {
+      "root": "integration",
+      "path": "scripts/check-tcb.mjs",
+      "symbol": "createBindingChecker",
+      "accepts": "one parsed source file selected by the governed root scanner",
+      "emits": "an isolated bound copy and public TypeScript type checker",
+      "failure": "resolves neither libraries nor imported modules outside the selected file",
+      "invariant": "binding analysis reads source text without executing or resolving dependencies"
+    },
+    {
+      "root": "integration",
+      "path": "scripts/check-tcb.mjs",
       "symbol": "inspectFile",
       "accepts": "UTF-8 bytes from one selected governed source file",
       "emits": "declarations and contract comment locations from its AST",
