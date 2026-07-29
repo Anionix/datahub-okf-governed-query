@@ -29,8 +29,24 @@ MCP caller
 - The MVP does not write decisions or query results back to DataHub.
 - The demo uses one synthetic dataset and fails closed on ambiguity or drift.
 
+## Development checks
+
+Enter the pinned Nix shell, install with pnpm, and use Deno as the
+least-privilege TCB runtime:
+
+```sh
+nix develop
+pnpm install --frozen-lockfile
+deno task check
+```
+
+`pnpm-lock.yaml` is the only npm dependency lock. Deno uses the existing
+`node_modules` in manual mode and receives repository read access only for the
+TCB check. Environment access is limited to 22 exact non-secret TypeScript
+watcher, inspector, mode, and terminal keys; Deno receives no write, network,
+subprocess, FFI, or system permission.
+
 Start with the
 [design specification](docs/superpowers/specs/2026-07-28-datahub-okf-governed-query-design.md)
 and the
 [implementation plan index](outputs/datahub-okf-governed-query-plan-index.md).
-

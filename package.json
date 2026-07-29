@@ -8,7 +8,7 @@
     "pnpm": "11.17.0"
   },
   "scripts": {
-    "tcb:check": "node scripts/check-tcb.mjs --manifest security/security-transitions.v1.json",
+    "tcb:check": "deno task tcb:check",
     "pnpm-settings:check": "node scripts/check-pnpm-settings.mjs",
     "format": "biome format --write .",
     "scripts:check": "tsc -p tsconfig.scripts.json --noEmit --pretty false",
