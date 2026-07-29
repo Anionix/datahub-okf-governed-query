@@ -933,36 +933,41 @@ function inspectFile(file) {
   }
   const headers = [];
   const lines = text.split("\n");
-  const commentRanges = new Set();
+  /** @type {Map<string, import("typescript").CommentRange>} */
+  const commentRanges = new Map();
+  /** @type {Array<readonly [number, number]>} */
+  const jsxTextRanges = [];
   /** @type {ts.Node[]} */
   const nodes = [sourceFile];
   for (const node of nodes) {
+    if (ts.isJsxText(node)) {
+      jsxTextRanges.push([node.pos, node.end]);
+    }
     for (const range of [
       ...(ts.getLeadingCommentRanges(text, node.pos) ?? []),
       ...(ts.getTrailingCommentRanges(text, node.end) ?? []),
     ]) {
-      commentRanges.add(`${range.pos}:${range.end}`);
+      commentRanges.set(`${range.pos}:${range.end}`, range);
     }
     nodes.push(...node.getChildren(sourceFile));
   }
-  const scanner = ts.createScanner(
-    ts.ScriptTarget.Latest,
-    false,
-    ts.LanguageVariant.Standard,
-    text,
+  const ranges = [...commentRanges.values()].sort(
+    (left, right) => left.pos - right.pos || left.end - right.end,
   );
-  for (let token = scanner.scan(); token !== ts.SyntaxKind.EndOfFileToken; token = scanner.scan()) {
+  for (const range of ranges) {
+    const token = range.kind;
     if (
       token !== ts.SyntaxKind.SingleLineCommentTrivia &&
       token !== ts.SyntaxKind.MultiLineCommentTrivia
     ) {
       continue;
     }
-    if (!commentRanges.has(`${scanner.getTokenPos()}:${scanner.getTextPos()}`)) {
+    const tokenStart = range.pos;
+    if (jsxTextRanges.some(([start, end]) => start <= tokenStart && tokenStart < end)) {
       continue;
     }
-    const comment = scanner.getTokenText();
-    const line = sourceFile.getLineAndCharacterOfPosition(scanner.getTokenPos()).line;
+    const comment = text.slice(range.pos, range.end);
+    const line = sourceFile.getLineAndCharacterOfPosition(range.pos).line;
     if (comment.includes("LLM-CONTRACT")) {
       if (
         token !== ts.SyntaxKind.SingleLineCommentTrivia ||
@@ -984,7 +989,7 @@ function inspectFile(file) {
     if (
       token === ts.SyntaxKind.MultiLineCommentTrivia &&
       /@type\s*\{/u.test(comment) &&
-      /^\s*\(/u.test(text.slice(scanner.getTextPos()))
+      /^\s*\(/u.test(text.slice(range.end))
     ) {
       fail(file.path, line + 1, "JsDocAssertion");
     }

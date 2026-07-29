@@ -244,6 +244,70 @@ for (const { name, ...fixture } of contractRejections) {
   });
 }
 
+/** @type {readonly (readonly [string, string])[]} */
+const jsxTextFixtures = [
+  ["block marker", "/* LLM-CONTRACT: rendered example */"],
+  ["line marker", "// LLM-CONTRACT: rendered example"],
+  ["unterminated block shape", "/* LLM-CONTRACT: rendered example"],
+  ["directive shape", "// @ts-ignore rendered example"],
+];
+
+for (const [name, text] of jsxTextFixtures) {
+  test(`accepts marker-shaped JSX text: ${name}`, (context) => {
+    assertAccepted(
+      runFixture(context, {
+        manifest: manifest([]),
+        files: {
+          "packages/contracts/src/example.tsx": `const view = <pre>${text}</pre>;\nvoid view;\n`,
+        },
+      }),
+    );
+  });
+}
+
+/** @type {readonly (readonly [string, string])[]} */
+const jsxCommentRejections = [
+  [
+    "genuine TSX block comment",
+    "const view = <pre />;\n/* LLM-CONTRACT: unregistered */\nvoid view;\n",
+  ],
+  [
+    "JSX expression comment",
+    "const view = <pre>{/* LLM-CONTRACT: unregistered */}</pre>;\nvoid view;\n",
+  ],
+  [
+    "comment after line-shaped JSX text",
+    "const view = <pre>// rendered text</pre>; /* LLM-CONTRACT: unregistered */\nvoid view;\n",
+  ],
+  [
+    "comment after unterminated block-shaped JSX text",
+    "const view = <pre>/* rendered text</pre>; /* LLM-CONTRACT: unregistered */\nvoid view;\n",
+  ],
+];
+
+for (const [name, source] of jsxCommentRejections) {
+  test(`rejects ${name}`, (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([]),
+      files: { "packages/contracts/src/example.tsx": source },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /ContractCommentForm/u);
+  });
+}
+
+test("rejects a directive after line-shaped JSX text", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([]),
+    files: {
+      "packages/contracts/src/example.tsx":
+        "const view = <pre>// rendered text</pre>; // @ts-ignore\nvoid view;\n",
+    },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /TsIgnoreComment/u);
+});
+
 /** @type {readonly { name: string, source: string }[]} */
 const forbiddenFixtures = [
   { name: "any keyword", source: "let value: any;\n" },
