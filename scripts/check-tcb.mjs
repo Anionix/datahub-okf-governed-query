@@ -1122,15 +1122,22 @@ function expressionCarriesAuthority(expression, checker, authority, members = SI
     }
   }
   if (ts.isCallExpression(expression)) {
-    if (
-      ts.isPropertyAccessExpression(expression.expression) &&
-      expression.expression.name.text === "bind"
-    ) {
-      return expressionCarriesAuthority(
-        expression.expression.expression,
-        checker,
-        authority,
-        members,
+    const bindTarget =
+      (ts.isPropertyAccessExpression(expression.expression) &&
+        expression.expression.name.text === "bind") ||
+      (ts.isElementAccessExpression(expression.expression) &&
+        expression.expression.argumentExpression !== undefined &&
+        ts.isStringLiteral(expression.expression.argumentExpression) &&
+        expression.expression.argumentExpression.text === "bind")
+        ? expression.expression.expression
+        : undefined;
+    if (bindTarget !== undefined) {
+      // A bound function retains both its callable target and every bound capability argument.
+      return (
+        expressionCarriesAuthority(bindTarget, checker, authority, members) ||
+        expression.arguments.some((argument) =>
+          expressionCarriesAuthority(argument, checker, authority, members),
+        )
       );
     }
     if (expressionCarriesAuthority(expression.expression, checker, authority, members)) {

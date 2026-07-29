@@ -712,6 +712,14 @@ const nestedAliasRejections = [
     "let run = safe;\n({ ...run } = { cap: writeFile });\nfunction inner(): void { run(); }",
   ],
   ["opaque call result", "const run = identity(writeFile);\nfunction inner(): void { run(); }"],
+  [
+    "bind argument alias",
+    "const bound = Function.prototype.call.bind(writeFile);\nconst run = bound;\nfunction inner(): void { run(); }",
+  ],
+  [
+    "static element bind",
+    'const run = writeFile["bind"](null);\nfunction inner(): void { run(); }',
+  ],
 ];
 
 for (const [name, body, parameters] of nestedAliasRejections) {
