@@ -15,8 +15,9 @@
         let pkgs = import nixpkgs { inherit system; };
         in {
           default = pkgs.mkShell {
-            packages = [ pkgs.nodejs_24 pkgs.pnpm_11 ];
+            packages = [ pkgs.deno pkgs.nodejs_24 pkgs.pnpm_11 ];
             shellHook = ''
+              test "$(deno --version | head -n 1 | cut -d ' ' -f 2)" = "2.8.3"
               test "$(node --version)" = "v24.18.0"
               test "$(pnpm --version)" = "11.17.0"
             '';
