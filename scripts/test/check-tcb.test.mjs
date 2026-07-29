@@ -439,7 +439,7 @@ const safeNameFixtures = [
   "namespace N { void writeFile; if (flag) { var writeFile = safe; } }",
   "namespace N { class C { static { var writeFile = safe; void writeFile; } } }",
   "namespace N { function writeFile() {} writeFile(); }",
-  "namespace N { import writeFile = Safe.writeFile; void writeFile; }",
+  "namespace N { import writeFile = Safe.value; void writeFile; }",
   "const parse = safe, value = parse; void value;",
   "const parse = safe;\nconst value = parse;\nvoid value;",
   "export {}; void parse; if (flag) { var parse = safe; }",
@@ -1060,6 +1060,49 @@ for (const [name, declaration] of erasedNamespaceShadowFixtures) {
     assert.match(result.stderr, /TopLevelAuthority/u);
   });
 }
+
+/** @type {readonly (readonly [string, string])[]} */
+const runtimeNamespaceImportEqualsRejections = [
+  ["direct", "namespace N { import writeFile = fs.writeFile; writeFile(); }\n"],
+  ["renamed", "namespace N { import run = fs.writeFile; run(); }\n"],
+  [
+    "live alias",
+    'import { writeFile as persist } from "node:fs";\n' +
+      "namespace N { import run = Safe.persist; run(); }\n",
+  ],
+  [
+    "static member behind a lexical shadow",
+    "namespace N { const writeFile = safe; import run = fs.writeFile; run(); }\n",
+  ],
+];
+
+for (const [name, source] of runtimeNamespaceImportEqualsRejections) {
+  test(`detects ${name} runtime namespace import-equals authority`, (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([]),
+      files: { [sourcePath]: source },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /TopLevelAuthority/u);
+  });
+}
+
+test("accepts safe and erased namespace import-equals aliases", (context) => {
+  for (const source of [
+    "namespace N { import writeFile = Safe.value; writeFile(); }\n",
+    "namespace N { import type writeFile = Safe.Type; }\n",
+    "declare namespace N { import writeFile = fs.writeFile; }\n",
+    'import { writeFile as persist } from "node:fs";\n' +
+      "namespace N { const persist = safe; import run = Safe.persist; run(); }\n",
+  ]) {
+    assertAccepted(
+      runFixture(context, {
+        manifest: manifest([]),
+        files: { [sourcePath]: source },
+      }),
+    );
+  }
+});
 
 test("detects static string authority element invocation", (context) => {
   assertRejected(
