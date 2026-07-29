@@ -277,6 +277,15 @@ const forbiddenFixtures = [
       'import { execFileSync as run } from "node:child_process";\n' +
       'function boundary(): void { run("true"); }\n',
   },
+  { name: "nested shadow", source: "function f(){writeFile();{let writeFile=x;}}" },
+  { name: "parameter shadow", source: "function f(){writeFile();g((writeFile)=>writeFile);}" },
+  { name: "arrow shadow", source: "const f=()=>[writeFile(),()=>{let writeFile=x}];" },
+  { name: "member sink", source: "function f(){const writeFile=safe;fs.writeFile();}" },
+  { name: "destructuring property", source: "function f(){const {writeFile:safe}=x;writeFile();}" },
+  { name: "default parameter sink", source: "function f(v=writeFile()){const writeFile=safe;}" },
+  { name: "top-level nested shadow", source: "{writeFile();{const writeFile=safe;}}" },
+  { name: "shorthand sink", source: "function f(){const {writeFile}=fs;writeFile();}" },
+  { name: "for-of shorthand", source: "function f(xs){for(const {writeFile} of xs)writeFile();}" },
 ];
 
 for (const fixture of forbiddenFixtures) {
@@ -295,6 +304,13 @@ const safeNameFixtures = [
   "function normalize(query: string): string { return query.trim(); }\n",
   "function helper(value: string): void { const parse = value.trim(); void parse; }\n",
   'import { parse } from "parser";\nfunction helper(parse: string): string { return parse.trim(); }\n',
+  "function f(){{const writeFile=safe;void writeFile;}}",
+  "function f(){var writeFile=safe;void writeFile;}",
+  "function f(){const writeFile=safe;const run=writeFile;void run;}",
+  "function f(xs){for(const writeFile of xs)void writeFile;}",
+  "function f(){try{}catch(writeFile){void writeFile;}}",
+  "function f(){function writeFile(){}writeFile();}",
+  "function f(v){switch(v){case 0:const writeFile=safe;void writeFile;}}",
 ];
 
 for (const [index, source] of safeNameFixtures.entries()) {
