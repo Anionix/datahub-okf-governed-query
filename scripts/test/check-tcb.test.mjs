@@ -821,6 +821,50 @@ test("accepts a safe renamed catch property", (context) => {
   }
 });
 
+const mixedCatchBindingControls = [
+  "try {} catch ({ execFile: run, message: writeFile }) { void writeFile; }",
+  "try {} catch ({ details: { execFile: run, message: writeFile } }) { void writeFile; }",
+  "try {} catch ({ execFile: run, message: writeFile = safe }) { void writeFile; }",
+  'try {} catch ({ ["execFile"]: run, ["message"]: writeFile }) { void writeFile; }',
+];
+
+for (const [index, source] of mixedCatchBindingControls.entries()) {
+  test(`accepts harmless mixed catch sibling ${index + 1}`, (context) => {
+    assertAccepted(
+      runFixture(context, {
+        manifest: manifest([]),
+        files: { [sourcePath]: source },
+      }),
+    );
+  });
+}
+
+test("retains the authority-bearing mixed catch element", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([]),
+    files: {
+      [sourcePath]:
+        "try {} catch ({ execFile: run, message: writeFile }) { run(); void writeFile; }",
+    },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /TopLevelAuthority/u);
+});
+
+for (const source of [
+  "try {} catch ({ ...run }) { run(); }",
+  "try {} catch ([...run]) { run(); }",
+]) {
+  test("retains a may-authority catch rest binding", (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([]),
+      files: { [sourcePath]: source },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /TopLevelAuthority/u);
+  });
+}
+
 for (const declaration of [
   'import type writeFile from "./safe.js";\n',
   'import type * as writeFile from "./safe.js";\n',
