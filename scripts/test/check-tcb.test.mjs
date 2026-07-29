@@ -1104,6 +1104,49 @@ test("accepts safe and erased namespace import-equals aliases", (context) => {
   }
 });
 
+/** @type {readonly (readonly [string, string])[]} */
+const externalModuleImportEqualsRejections = [
+  ["direct", "export {}; import writeFile = Safe.writeFile; writeFile();\n"],
+  [
+    "grounded direct",
+    'import * as Safe from "node:fs";\n' +
+      "import writeFile = Safe.writeFile;\n" +
+      "writeFile();\n",
+  ],
+  [
+    "live alias",
+    'import { writeFile as persist } from "node:fs";\n' +
+      "import run = Safe.persist;\n" +
+      "run();\n",
+  ],
+];
+
+for (const [name, source] of externalModuleImportEqualsRejections) {
+  test(`detects ${name} external-module import-equals authority`, (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([]),
+      files: { [sourcePath]: source },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /TopLevelAuthority/u);
+  });
+}
+
+test("accepts safe and type-only external-module import-equals aliases", (context) => {
+  for (const source of [
+    "export {}; import writeFile = Safe.value; writeFile();\n",
+    "export {}; import type writeFile = Safe.writeFile;\n",
+    'export {}; import writeFile = require("safe"); void writeFile;\n',
+  ]) {
+    assertAccepted(
+      runFixture(context, {
+        manifest: manifest([]),
+        files: { [sourcePath]: source },
+      }),
+    );
+  }
+});
+
 test("detects static string authority element invocation", (context) => {
   assertRejected(
     runFixture(context, {

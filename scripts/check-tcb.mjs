@@ -904,8 +904,7 @@ function namesVisibleInScope(scope, inherited, members) {
       ) {
         const runtimeShadow =
           !ts.isSourceFile(scope) || sourceIsModule || ts.isClassDeclaration(statement);
-        const namespaceImportCarriesAuthority =
-          ts.isModuleBlock(scope) &&
+        const runtimeImportCarriesAuthority =
           ts.isImportEqualsDeclaration(statement) &&
           importEqualsTargetReadsAuthority(statement.moduleReference, names, members);
         if (
@@ -914,9 +913,10 @@ function namesVisibleInScope(scope, inherited, members) {
           statement.name !== undefined &&
           ts.isIdentifier(statement.name)
         ) {
-          // Namespace import-equals policy source:
+          // Runtime import-equals policy sources:
           // https://github.com/Anionix/datahub-okf-governed-query/issues/41
-          if (namespaceImportCarriesAuthority) {
+          // https://github.com/Anionix/datahub-okf-governed-query/issues/42
+          if (runtimeImportCarriesAuthority) {
             names.add(statement.name.text);
           } else {
             names.delete(statement.name.text);
