@@ -361,6 +361,8 @@ const safeNameFixtures = [
   "function f(){const writeFile=safe;const run=writeFile;void run;}",
   "function f(xs){for(const writeFile of xs)void writeFile;}",
   "function f(){try{}catch(writeFile){void writeFile;}}",
+  "function f(){try{}catch({message: details}){void details;}}",
+  'function f(){try{}catch({["message"]: details}){void details;}}',
   "function f(){function writeFile(){}writeFile();}",
   "function f(v){switch(v){case 0:const writeFile=safe;void writeFile;}}",
   "function f(){const options={parse:false};void options;}",
@@ -420,6 +422,78 @@ const authorityAliasFixtures = [
       "  let second = first;\n" +
       "  second = first;\n" +
       '  second("x", "y", () => {});\n' +
+      "}\n",
+  },
+  {
+    name: "renamed catch authority alias",
+    source:
+      "function boundary(): void {\n" +
+      "  try {} catch ({ writeFile: run }) {\n" +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
+      "}\n",
+  },
+  {
+    name: "string-key catch authority alias",
+    source:
+      "function boundary(): void {\n" +
+      '  try {} catch ({ "writeFile": run }) {\n' +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
+      "}\n",
+  },
+  {
+    name: "computed string-key catch authority alias",
+    source:
+      "function boundary(): void {\n" +
+      '  try {} catch ({ ["writeFile"]: run }) {\n' +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
+      "}\n",
+  },
+  {
+    name: "computed template-key catch authority alias",
+    source:
+      "function boundary(): void {\n" +
+      "  try {} catch ({ [`writeFile`]: run }) {\n" +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
+      "}\n",
+  },
+  {
+    name: "parenthesized computed catch authority alias",
+    source:
+      "function boundary(): void {\n" +
+      '  try {} catch ({ [(("writeFile"))]: run }) {\n' +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
+      "}\n",
+  },
+  {
+    name: "satisfies computed catch authority alias",
+    source:
+      "function boundary(): void {\n" +
+      '  try {} catch ({ ["writeFile" satisfies string]: run }) {\n' +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
+      "}\n",
+  },
+  {
+    name: "concatenated catch authority alias",
+    source:
+      "function boundary(): void {\n" +
+      '  try {} catch ({ ["write" + "File"]: run }) {\n' +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
+      "}\n",
+  },
+  {
+    name: "dynamic catch authority alias",
+    source:
+      "function boundary(key: string): void {\n" +
+      "  try {} catch ({ [key]: run }) {\n" +
+      '    run("x", "y", () => {});\n' +
+      "  }\n" +
       "}\n",
   },
 ];

@@ -463,7 +463,7 @@ function collectAuthorityNames(boundary, seeds, preserveShadows = false) {
       } else if (
         ts.isBindingElement(node) &&
         node.propertyName !== undefined &&
-        referencesAuthority(node.propertyName, names)
+        propertyReadsAuthority(node.propertyName, names)
       ) {
         changed = addIdentifierNames(node.name, names) || changed;
       } else if (
@@ -645,6 +645,37 @@ function isNonRuntimeIdentifier(node) {
   );
 }
 
+// Runtime-transparent TypeScript expression source:
+// https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator
+/** @param {import("typescript").PropertyName} property @param {ReadonlySet<string>} members */
+function propertyReadsAuthority(property, members) {
+  if (ts.isStringLiteralLike(property)) {
+    return members.has(property.text);
+  }
+  if (ts.isComputedPropertyName(property)) {
+    /** @type {import("typescript").Expression} */
+    let expression = property.expression;
+    while (
+      ts.isParenthesizedExpression(expression) ||
+      ts.isSatisfiesExpression(expression) ||
+      ts.isAsExpression(expression) ||
+      ts.isTypeAssertionExpression(expression) ||
+      ts.isNonNullExpression(expression)
+    ) {
+      expression = expression.expression;
+    }
+    if (ts.isStringLiteralLike(expression)) {
+      return members.has(expression.text);
+    }
+    if (ts.isNumericLiteral(expression) || ts.isBigIntLiteral(expression)) {
+      return false;
+    }
+    // A dynamic property key can resolve to an authority member at runtime.
+    return true;
+  }
+  return referencesAuthority(property, members);
+}
+
 /** @param {import("typescript").BindingName} name @param {ReadonlySet<string>} members @returns {boolean} */
 function bindingReadsAuthority(name, members) {
   if (ts.isIdentifier(name)) {
@@ -662,9 +693,7 @@ function bindingReadsAuthority(name, members) {
         ? element.name
         : undefined);
     if (
-      (property !== undefined &&
-        (ts.isIdentifier(property) || ts.isStringLiteral(property)) &&
-        members.has(property.text)) ||
+      (property !== undefined && propertyReadsAuthority(property, members)) ||
       bindingReadsAuthority(element.name, members)
     ) {
       return true;
@@ -727,7 +756,7 @@ function namesVisibleInScope(scope, inherited, members) {
       deleteBindingNames(parameter.name, names);
     }
   } else if (ts.isCatchClause(scope) && scope.variableDeclaration !== undefined) {
-    deleteBindingNames(scope.variableDeclaration.name, names);
+    removeHarmless(scope.variableDeclaration);
   } else if (
     (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
     scope.initializer !== undefined &&
