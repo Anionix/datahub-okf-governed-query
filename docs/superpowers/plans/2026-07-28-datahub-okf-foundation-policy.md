@@ -68,6 +68,7 @@ nix/uv-0.11.32.nix                            exact uv override
 nix/lean4-4.32.1.nix                          exact four-platform Lean package
 scripts/check-toolchain.mjs                   exact version gate
 security/security-transitions.v1.json         closed transition/comment registry
+scripts/check-pnpm-settings.mjs               effective pnpm settings and lock gate
 scripts/check-tcb.mjs                         AST and LLM-contract enforcement
 security/security-shell-transitions.v1.json   closed shell authority registry
 security/security-sql-transitions.v1.json     closed SQL authority registry
@@ -105,13 +106,13 @@ the next.
 
 | Task | Branch | Files (exhaustive) | Commit |
 |---|---|---|---|
-| 1A — strict workspace and TypeScript TCB | `build/strict-typescript-workspace` | Create `.gitignore`, `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `tsconfig.json`, `tsconfig.base.json`, `tsconfig.scripts.json`, `biome.json`, `flake.nix`, `flake.lock`, `security/security-transitions.v1.json`, `scripts/check-tcb.mjs`, `scripts/test/check-tcb.test.mjs` | `build: establish strict typed workspace` |
+| 1A — strict workspace and TypeScript TCB | `build/strict-typescript-workspace` | Create `.gitignore`, `package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml`, `tsconfig.json`, `tsconfig.base.json`, `tsconfig.scripts.json`, `biome.json`, `flake.nix`, `flake.lock`, `security/security-transitions.v1.json`, `scripts/check-pnpm-settings.mjs`, `scripts/check-tcb.mjs`, `scripts/test/check-pnpm-settings.test.mjs`, `scripts/test/check-tcb.test.mjs` | `build: establish strict typed workspace` |
 | 1B — exact native toolchain and shell/SQL TCB | `build/pinned-native-toolchain` | Create `nix/uv-0.11.32.nix`, `nix/lean4-4.32.1.nix`, `scripts/check-toolchain.mjs`, `security/security-shell-transitions.v1.json`, `security/security-sql-transitions.v1.json`, `scripts/check-security-shell.mjs`, `scripts/check-security-sql.mjs`, `scripts/test/check-security-shell.test.mjs`, `scripts/test/check-security-sql.test.mjs`; modify `flake.nix`, `package.json`, `security/security-transitions.v1.json` | `build: pin the governed query toolchain` |
 | 1C — immutable workflow matrix | `ci/pinned-toolchain-matrix` | Create `security/github-actions-uses.v1.json`, `scripts/check-policy-workflow.mjs`, `scripts/test/check-policy-workflow.test.mjs`, `.github/workflows/toolchain.yml`; modify `package.json`, `security/security-transitions.v1.json` | `ci: verify the four native toolchains` |
 
-Row gates are incremental: 1A's `package.json` exposes only
-`tcb:check`, format, TypeScript, and test commands and runs the TypeScript TCB
-fixture suite; 1B adds toolchain/shell/SQL commands and runs native flake plus
+Row gates are incremental: 1A's `package.json` exposes only `tcb:check`,
+`pnpm-settings:check`, format, TypeScript, and test commands and runs both
+fixture suites; 1B adds toolchain/shell/SQL commands and runs native flake plus
 shell/SQL fixtures; 1C adds `workflow:check`, runs the workflow fixtures, and
 then enables the final aggregate `check` shown below. A row never invokes a
 script owned by a later row.
@@ -130,7 +131,9 @@ script owned by a later row.
 - Create: `nix/lean4-4.32.1.nix`
 - Create: `scripts/check-toolchain.mjs`
 - Create: `security/security-transitions.v1.json`
+- Create: `scripts/check-pnpm-settings.mjs`
 - Create: `scripts/check-tcb.mjs`
+- Create: `scripts/test/check-pnpm-settings.test.mjs`
 - Create: `scripts/test/check-tcb.test.mjs`
 - Create: `security/security-shell-transitions.v1.json`
 - Create: `security/security-sql-transitions.v1.json`
@@ -148,7 +151,7 @@ script owned by a later row.
 - Consumes: Nixpkgs commit
   `8623c4c20aa4ca2f5fb81510d2944066c3fb0d96` and only fixed-output
   exceptions declared below.
-- Produces: `pnpm check`, `pnpm test`, and `pnpm toolchain:check`; workspace packages inherit `tsconfig.base.json`.
+- Produces: `pnpm check`, `pnpm test`, `pnpm pnpm-settings:check`, and `pnpm toolchain:check`; workspace packages inherit `tsconfig.base.json`.
 
 - [ ] **Step 1 [1B only]: Write the exact version gate**
 
@@ -191,9 +194,10 @@ toolchain, shell, SQL, or workflow script:
   "engines": {"node": "24.18.0", "pnpm": "11.17.0"},
   "scripts": {
     "tcb:check": "node scripts/check-tcb.mjs --manifest security/security-transitions.v1.json",
+    "pnpm-settings:check": "node scripts/check-pnpm-settings.mjs",
     "format": "biome format --write .",
     "scripts:check": "tsc -p tsconfig.scripts.json --noEmit --pretty false",
-    "check": "pnpm tcb:check && biome check . && pnpm scripts:check",
+    "check": "pnpm tcb:check && pnpm pnpm-settings:check && biome check . && pnpm scripts:check",
     "test": "pnpm -r --if-present run test"
   },
   "devDependencies": {
@@ -230,7 +234,7 @@ After 1A merges, 1B adds exactly `toolchain:check`, `shell-tcb:check`, and
 
 ```json
 {
-  "check": "pnpm tcb:check && pnpm shell-tcb:check && pnpm sql-tcb:check && biome check . && pnpm scripts:check",
+  "check": "pnpm tcb:check && pnpm pnpm-settings:check && pnpm shell-tcb:check && pnpm sql-tcb:check && biome check . && pnpm scripts:check",
   "shell-tcb:check": "node scripts/check-security-shell.mjs security/security-shell-transitions.v1.json",
   "sql-tcb:check": "node scripts/check-security-sql.mjs security/security-sql-transitions.v1.json",
   "toolchain:check": "node scripts/check-toolchain.mjs"
@@ -242,7 +246,7 @@ aggregate to:
 
 ```json
 {
-  "check": "pnpm tcb:check && pnpm shell-tcb:check && pnpm sql-tcb:check && pnpm workflow:check && biome check . && pnpm scripts:check",
+  "check": "pnpm tcb:check && pnpm pnpm-settings:check && pnpm shell-tcb:check && pnpm sql-tcb:check && pnpm workflow:check && biome check . && pnpm scripts:check",
   "workflow:check": "node scripts/check-policy-workflow.mjs security/github-actions-uses.v1.json"
 }
 ```
@@ -367,8 +371,10 @@ pnpm 11 no longer reads non-auth settings from the `pnpm` field in
 `package.json`; root settings belong in `pnpm-workspace.yaml`. The placement
 above follows the official
 [pnpm package manifest](https://pnpm.io/package_json) and
-[settings](https://pnpm.io/settings#overrides) documentation. A lockfile-only
-run that reports an ignored `pnpm.overrides` warning is a failing gate.
+[settings](https://pnpm.io/settings#overrides) documentation. The mandatory
+`pnpm pnpm-settings:check` gate rejects ignored `package.json#pnpm` settings
+and their pnpm diagnostic, then requires the effective configuration and
+lockfile to contain exactly the two reviewed overrides above.
 
 ```json
 {
@@ -673,13 +679,15 @@ installer SHAs above, runs
 ```bash
 nix flake lock
 nix develop -c pnpm install --lockfile-only
+nix develop -c pnpm pnpm-settings:check
 nix develop -c pnpm install --frozen-lockfile
 nix develop -c pnpm check
 ```
 
 Expected for 1A: `pnpm-lock.yaml` and `flake.lock` are newly created, the
-second install proves the lock is complete, and the 1A-only aggregate passes
-from a clean checkout.
+settings gate proves the effective and locked overrides match exactly without
+ignored package-manifest settings, the second install proves the lock is
+complete, and the 1A-only aggregate passes from a clean checkout.
 
 After 1A merges, 1B runs:
 
@@ -702,7 +710,7 @@ must pass before 1C merges.
 Run only the current Delivery row's commands. For 1A:
 
 ```bash
-node --test scripts/test/check-tcb.test.mjs
+node --test scripts/test/check-tcb.test.mjs scripts/test/check-pnpm-settings.test.mjs
 pnpm check
 ```
 

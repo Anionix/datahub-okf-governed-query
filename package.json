@@ -9,9 +9,10 @@
   },
   "scripts": {
     "tcb:check": "node scripts/check-tcb.mjs --manifest security/security-transitions.v1.json",
+    "pnpm-settings:check": "node scripts/check-pnpm-settings.mjs",
     "format": "biome format --write .",
     "scripts:check": "tsc -p tsconfig.scripts.json --noEmit --pretty false",
-    "check": "pnpm tcb:check && biome check . && pnpm scripts:check",
+    "check": "pnpm tcb:check && pnpm pnpm-settings:check && biome check . && pnpm scripts:check",
     "test": "pnpm -r --if-present run test"
   },
   "devDependencies": {
