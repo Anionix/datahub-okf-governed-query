@@ -662,6 +662,56 @@ function propertyReadsAuthority(property, members) {
   return referencesAuthority(property, members);
 }
 
+/**
+ * @param {import("typescript").PropertyName} property
+ * @param {import("typescript").TypeChecker} checker
+ * @param {ReadonlySet<import("typescript").Symbol>} authority
+ * @param {ReadonlySet<string>} members
+ * @returns {boolean}
+ */
+function bindingPropertyReadsAuthority(property, checker, authority, members) {
+  if (propertyReadsAuthority(property, members)) {
+    return true;
+  }
+  const expression = ts.isComputedPropertyName(property)
+    ? unwrapRuntimeTransparentExpression(property.expression)
+    : property;
+  if (!ts.isIdentifier(expression) && !ts.isStringLiteralLike(expression)) {
+    return false;
+  }
+  const key = expression.text;
+  if (
+    checker
+      .getSymbolsInScope(property, ts.SymbolFlags.Value)
+      .some((symbol) => symbol.name === key && authority.has(symbol))
+  ) {
+    return true;
+  }
+  const unresolvedImport = [...authority].some(
+    (symbol) =>
+      symbol.name === key &&
+      symbol.declarations?.some(
+        (declaration) =>
+          ts.isImportSpecifier(declaration) && isRuntimeBindingDeclaration(declaration),
+      ),
+  );
+  if (!unresolvedImport) {
+    return false;
+  }
+  const path = [];
+  /** @type {import("typescript").Node | undefined} */
+  let current = property;
+  while (current !== undefined) {
+    path.push(current);
+    current = current.parent;
+  }
+  let visible = new Set([key]);
+  for (const scope of path.reverse()) {
+    visible = namesVisibleInScope(scope, visible, members);
+  }
+  return visible.has(key);
+}
+
 /** @param {import("typescript").BindingName} name @param {ReadonlySet<string>} members @returns {boolean} */
 function bindingReadsAuthority(name, members) {
   if (ts.isIdentifier(name)) {
@@ -739,12 +789,15 @@ function referencesVisibleAuthority(node, lexical, members) {
 function namesVisibleInScope(scope, inherited, members) {
   const names = new Set(inherited);
   const sourceIsModule = ts.isSourceFile(scope) && ts.isExternalModule(scope);
-  /** @param {import("typescript").VariableDeclaration} declaration */
-  function removeHarmless(declaration) {
+  /**
+   * @param {import("typescript").VariableDeclaration} declaration
+   * @param {ReadonlySet<string>} [propertyNames]
+   */
+  function removeHarmless(declaration, propertyNames = members) {
     if (
       (declaration.initializer === undefined ||
         !referencesVisibleAuthority(declaration.initializer, names, members)) &&
-      !bindingReadsAuthority(declaration.name, members)
+      !bindingReadsAuthority(declaration.name, propertyNames)
     ) {
       deleteBindingNames(declaration.name, names);
     }
@@ -754,7 +807,9 @@ function namesVisibleInScope(scope, inherited, members) {
       deleteBindingNames(parameter.name, names);
     }
   } else if (ts.isCatchClause(scope) && scope.variableDeclaration !== undefined) {
-    removeHarmless(scope.variableDeclaration);
+    // Catch alias policy source: https://github.com/Anionix/datahub-okf-governed-query/issues/39
+    // Catch state: property keys are resolved against the live authority aliases.
+    removeHarmless(scope.variableDeclaration, names);
   } else if (
     (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&
     scope.initializer !== undefined &&
@@ -1213,7 +1268,8 @@ function taintBindingName(name, sourceCarries, checker, authority, members = SIN
       (ts.isObjectBindingPattern(name) && ts.isIdentifier(element.name) ? element.name : undefined);
     const elementCarries =
       sourceCarries ||
-      (property !== undefined && propertyReadsAuthority(property, members)) ||
+      (property !== undefined &&
+        bindingPropertyReadsAuthority(property, checker, authority, members)) ||
       (element.initializer !== undefined &&
         expressionCarriesAuthority(element.initializer, checker, authority, members));
     changed =

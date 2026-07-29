@@ -760,6 +760,67 @@ test("rejects a nested classic-script global before its var assignment", (contex
   }
 });
 
+/** @type {readonly (readonly [string, string, string])[]} */
+const renamedCatchAliasRejections = [
+  [
+    "imported",
+    'import { writeFile as persist } from "node:fs";\n',
+    "try {} catch ({ persist: run }) { function inner(): void { run(); } }",
+  ],
+  [
+    "assigned",
+    "",
+    "const persist = writeFile;\n" +
+      "try {} catch ({ persist: run }) { function inner(): void { run(); } }",
+  ],
+  [
+    "static string",
+    "",
+    "const persist = writeFile;\n" +
+      'try {} catch ({ "persist": run }) { function inner(): void { run(); } }',
+  ],
+  [
+    "computed static",
+    "",
+    "const persist = writeFile;\n" +
+      'try {} catch ({ ["persist"]: run }) { function inner(): void { run(); } }',
+  ],
+];
+
+for (const [name, prefix, body] of renamedCatchAliasRejections) {
+  test(`rejects nested ${name} catch authority alias`, (context) => {
+    const result = runFixture(context, {
+      manifest: manifest([entry(sourcePath, "outer")]),
+      files: { [sourcePath]: `${prefix}${outerOnlySource(body)}` },
+    });
+    assertRejected(result);
+    assert.match(result.stderr, /MissingRegistration/u);
+  });
+}
+
+test("accepts a safe renamed catch property", (context) => {
+  for (const source of [
+    outerOnlySource(
+      "void writeFile;\n" +
+        "const persist = safe;\n" +
+        "try {} catch ({ persist: run }) { function inner(): void { run(); } }",
+    ),
+    'import { writeFile as persist } from "node:fs";\n' +
+      outerOnlySource(
+        "void writeFile;\n" +
+          "const persist = safe;\n" +
+          "try {} catch ({ persist: run }) { function inner(): void { run(); } }",
+      ),
+  ]) {
+    assertAccepted(
+      runFixture(context, {
+        manifest: manifest([entry(sourcePath, "outer")]),
+        files: { [sourcePath]: source },
+      }),
+    );
+  }
+});
+
 for (const declaration of [
   'import type writeFile from "./safe.js";\n',
   'import type * as writeFile from "./safe.js";\n',
