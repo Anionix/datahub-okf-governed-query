@@ -466,6 +466,10 @@ test("keeps a nested named authority boundary separate", (context) => {
 
 const unownedAuthorityFixtures = [
   {
+    name: "top-level digest invocation",
+    source: "digest();\n",
+  },
+  {
     name: "top-level authority invocation",
     source: 'writeFile("x", "y", () => {});\n',
   },
@@ -499,6 +503,21 @@ const unownedAuthorityFixtures = [
     source: 'export { persist as save } from "./authority.js";\n',
   },
 ];
+
+const typeOnlyAuthorityFixtures = [
+  "type Artifact = Readonly<{ digest: string }>;\n",
+  "interface Artifact { digest: string }\n",
+  "type digest = string;\n",
+  "function helper<digest>(value: digest): void { void value; }\n",
+];
+
+for (const [index, source] of typeOnlyAuthorityFixtures.entries()) {
+  test(`accepts a sink name used only in a type ${index + 1}`, (context) => {
+    assertAccepted(
+      runFixture(context, { manifest: manifest([]), files: { [sourcePath]: source } }),
+    );
+  });
+}
 
 for (const fixture of unownedAuthorityFixtures) {
   test(`rejects ${fixture.name}`, (context) => {

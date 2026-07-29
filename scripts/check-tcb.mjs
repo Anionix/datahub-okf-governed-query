@@ -565,10 +565,21 @@ function isNonRuntimeIdentifier(node) {
   ) {
     return true;
   }
+  // Type erasure source:
+  // https://www.typescriptlang.org/docs/handbook/2/basic-types.html#erased-types
   let current = parent;
-  while (!ts.isSourceFile(current) && !ts.isStatement(current) && !ts.isExpression(current)) {
-    if (ts.isTypeNode(current)) {
+  while (!ts.isSourceFile(current)) {
+    if (
+      ts.isTypeNode(current) ||
+      ts.isTypeElement(current) ||
+      ts.isTypeAliasDeclaration(current) ||
+      ts.isInterfaceDeclaration(current) ||
+      ts.isTypeParameterDeclaration(current)
+    ) {
       return true;
+    }
+    if (ts.isStatement(current) || ts.isExpression(current)) {
+      return false;
     }
     current = current.parent;
   }
@@ -709,8 +720,8 @@ function namesVisibleInScope(scope, inherited, members) {
   return names;
 }
 
-/** @param {import("typescript").Node} boundary @param {ReadonlySet<string>} sinkSeeds @param {ReadonlySet<string>} [memberSeeds] @param {"runtime" | "syntax"} [mode] */
-function containsSink(boundary, sinkSeeds, memberSeeds = SINK_NAMES, mode = "runtime") {
+/** @param {import("typescript").Node} boundary @param {ReadonlySet<string>} sinkSeeds @param {ReadonlySet<string>} [memberSeeds] */
+function containsSink(boundary, sinkSeeds, memberSeeds = SINK_NAMES) {
   const sinkNames = collectAuthorityNames(boundary, sinkSeeds, true);
   let found = false;
   /** @param {import("typescript").Node} node @param {ReadonlySet<string>} visible */
@@ -721,9 +732,7 @@ function containsSink(boundary, sinkSeeds, memberSeeds = SINK_NAMES, mode = "run
     const scoped = namesVisibleInScope(node, visible, memberSeeds);
     if (
       isAuthorityMember(node, memberSeeds) ||
-      (ts.isIdentifier(node) &&
-        scoped.has(node.text) &&
-        (mode === "syntax" || !isNonRuntimeIdentifier(node)))
+      (ts.isIdentifier(node) && scoped.has(node.text) && !isNonRuntimeIdentifier(node))
     ) {
       found = true;
       return;
@@ -978,7 +987,7 @@ function inspectFile(file) {
     ) {
       continue;
     }
-    if (containsSink(statement, unownedSeeds, unownedMembers, "syntax")) {
+    if (containsSink(statement, unownedSeeds, unownedMembers)) {
       const line =
         sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1;
       fail(file.path, line, "TopLevelAuthority");
