@@ -629,23 +629,27 @@ function isNonRuntimeIdentifier(node) {
 
 // Runtime-transparent TypeScript expression source:
 // https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator
+/** @param {import("typescript").Expression} expression @returns {import("typescript").Expression} */
+function unwrapRuntimeTransparentExpression(expression) {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression)
+  ) {
+    expression = expression.expression;
+  }
+  return expression;
+}
+
 /** @param {import("typescript").PropertyName} property @param {ReadonlySet<string>} members */
 function propertyReadsAuthority(property, members) {
   if (ts.isStringLiteralLike(property)) {
     return members.has(property.text);
   }
   if (ts.isComputedPropertyName(property)) {
-    /** @type {import("typescript").Expression} */
-    let expression = property.expression;
-    while (
-      ts.isParenthesizedExpression(expression) ||
-      ts.isSatisfiesExpression(expression) ||
-      ts.isAsExpression(expression) ||
-      ts.isTypeAssertionExpression(expression) ||
-      ts.isNonNullExpression(expression)
-    ) {
-      expression = expression.expression;
-    }
+    const expression = unwrapRuntimeTransparentExpression(property.expression);
     if (ts.isStringLiteralLike(expression)) {
       return members.has(expression.text);
     }
@@ -1034,6 +1038,21 @@ function identifierCarriesAuthority(identifier, checker, authority, members = SI
  * @param {import("typescript").Expression} expression
  * @param {import("typescript").TypeChecker} checker
  * @param {ReadonlySet<import("typescript").Symbol>} authority
+ * @param {ReadonlySet<string>} members
+ * @returns {boolean}
+ */
+function directlyNamesAuthority(expression, checker, authority, members) {
+  const target = unwrapRuntimeTransparentExpression(expression);
+  return (
+    isAuthorityMember(target, members) ||
+    (ts.isIdentifier(target) && identifierCarriesAuthority(target, checker, authority, members))
+  );
+}
+
+/**
+ * @param {import("typescript").Expression} expression
+ * @param {import("typescript").TypeChecker} checker
+ * @param {ReadonlySet<import("typescript").Symbol>} authority
  * @param {ReadonlySet<string>} [members]
  * @returns {boolean}
  */
@@ -1045,12 +1064,11 @@ function expressionCarriesAuthority(expression, checker, authority, members = SI
     const symbol = carrierSymbol(expression, checker);
     return symbol !== undefined && authority.has(symbol);
   }
+  const unwrappedExpression = unwrapRuntimeTransparentExpression(expression);
+  if (unwrappedExpression !== expression) {
+    return expressionCarriesAuthority(unwrappedExpression, checker, authority, members);
+  }
   if (
-    ts.isParenthesizedExpression(expression) ||
-    ts.isSatisfiesExpression(expression) ||
-    ts.isAsExpression(expression) ||
-    ts.isTypeAssertionExpression(expression) ||
-    ts.isNonNullExpression(expression) ||
     ts.isAwaitExpression(expression) ||
     ts.isYieldExpression(expression) ||
     ts.isSpreadElement(expression)
@@ -1140,7 +1158,10 @@ function expressionCarriesAuthority(expression, checker, authority, members = SI
         )
       );
     }
-    if (expressionCarriesAuthority(expression.expression, checker, authority, members)) {
+    // Call-result policy source: https://github.com/Anionix/datahub-okf-governed-query/issues/40
+    // Call evaluation source: https://tc39.es/ecma262/#sec-evaluatecall
+    // Call-result state: only a directly named authority absorbs its arguments.
+    if (directlyNamesAuthority(expression.expression, checker, authority, members)) {
       return false;
     }
     return expression.arguments.some((argument) =>

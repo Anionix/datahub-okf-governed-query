@@ -713,6 +713,18 @@ const nestedAliasRejections = [
   ],
   ["opaque call result", "const run = identity(writeFile);\nfunction inner(): void { run(); }"],
   [
+    "carrier call argument",
+    "const carrier = { identity: safe, cap: writeFile };\n" +
+      "const run = carrier.identity(writeFile);\n" +
+      "function inner(): void { run(); }",
+  ],
+  [
+    "later carrier call argument",
+    "const carrier = { identity: safe, cap: writeFile };\n" +
+      "const run = carrier.identity(safe, writeFile);\n" +
+      "function inner(): void { run(); }",
+  ],
+  [
     "bind argument alias",
     "const bound = Function.prototype.call.bind(writeFile);\nconst run = bound;\nfunction inner(): void { run(); }",
   ],
@@ -807,6 +819,14 @@ const nestedAliasControls = [
   ["var hoist shadow", "const run = writeFile;\nfunction inner(): void { run(); var run = safe; }"],
   ["for-in key", "for (const run in writeFile) { function inner(): void { run.trim(); } }"],
   ["authority call result", "const run = writeFile();\nfunction inner(): void { void run; }"],
+  [
+    "authority call argument result",
+    "const sink = writeFile;\nconst run = sink(writeFile);\nfunction inner(): void { void run; }",
+  ],
+  [
+    "authority member call argument result",
+    "const run = holder.writeFile(writeFile);\nfunction inner(): void { void run; }",
+  ],
   [
     "namespace runtime shadow",
     "void writeFile;\nnamespace N { const writeFile = safe; function inner(): void { writeFile(); } }",
