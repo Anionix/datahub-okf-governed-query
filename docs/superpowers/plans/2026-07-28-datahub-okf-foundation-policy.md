@@ -1054,7 +1054,14 @@ pnpm exec vitest run packages/contracts/test/public.test.ts --maxWorkers=1
 pnpm tcb:check
 pnpm exec tsc -p packages/contracts/tsconfig.json --noEmit
 pnpm exec biome check packages/contracts
+pnpm check
 ```
+
+The focused test, TCB check, package type check, and package Biome check all
+remain mandatory. The final `pnpm check` runs the root aggregate after Step 3
+restores `tsc -b --pretty false`, so it additionally verifies the solution
+project-reference graph and declaration build; it does not replace any
+preceding command.
 
 For 2B run:
 
