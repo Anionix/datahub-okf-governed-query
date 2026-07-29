@@ -605,6 +605,7 @@ function occursOnlyInErasedSyntax(node) {
       return false;
     }
     if (
+      (ts.isImportEqualsDeclaration(current) && current.isTypeOnly) ||
       ts.isTypeNode(current) ||
       ts.isTypeElement(current) ||
       ts.isTypeAliasDeclaration(current) ||
@@ -733,6 +734,9 @@ function referencesVisibleAuthority(node, lexical, members) {
 }
 
 // Scope semantics:
+// https://tc39.es/ecma262/#sec-globaldeclarationinstantiation
+// https://tc39.es/ecma262/#sec-moduledeclarationinstantiation
+// https://www.typescriptlang.org/docs/handbook/2/modules.html
 // https://tc39.es/ecma262/#sec-functiondeclarationinstantiation
 // https://tc39.es/ecma262/#sec-blockdeclarationinstantiation
 // https://tc39.es/ecma262/2026/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-catchclauseevaluation
@@ -746,9 +750,10 @@ function referencesVisibleAuthority(node, lexical, members) {
 // Accepts: one lexical scope and inherited authority-name state
 // Emits: authority names visible after runtime shadow declarations
 // Failure: preserves inherited authority when a declaration is ambient or unsafe
-// Invariant: namespace scope analysis never erases runtime authority use
+// Invariant: lexical scope analysis never erases runtime authority use
 function namesVisibleInScope(scope, inherited, members) {
   const names = new Set(inherited);
+  const sourceIsModule = ts.isSourceFile(scope) && ts.isExternalModule(scope);
   /** @param {import("typescript").VariableDeclaration} declaration */
   function removeHarmless(declaration) {
     if (
@@ -773,8 +778,14 @@ function namesVisibleInScope(scope, inherited, members) {
     for (const declaration of scope.initializer.declarations) {
       removeHarmless(declaration);
     }
-  } else if (ts.isBlock(scope) || ts.isCaseBlock(scope) || ts.isModuleBlock(scope)) {
+  } else if (
+    ts.isSourceFile(scope) ||
+    ts.isBlock(scope) ||
+    ts.isCaseBlock(scope) ||
+    ts.isModuleBlock(scope)
+  ) {
     if (
+      sourceIsModule ||
       ts.isModuleBlock(scope) ||
       (ts.isBlock(scope) &&
         ((ts.isFunctionLike(scope.parent) &&
@@ -807,13 +818,38 @@ function namesVisibleInScope(scope, inherited, members) {
       : scope.statements;
     for (const statement of statements) {
       if (
+        ts.isSourceFile(scope) &&
+        ts.isImportDeclaration(statement) &&
+        statement.importClause !== undefined &&
+        !statement.importClause.isTypeOnly
+      ) {
+        const clause = statement.importClause;
+        if (clause.name !== undefined) {
+          names.delete(clause.name.text);
+        }
+        if (clause.namedBindings !== undefined) {
+          if (ts.isNamespaceImport(clause.namedBindings)) {
+            names.delete(clause.namedBindings.name.text);
+          } else {
+            for (const specifier of clause.namedBindings.elements) {
+              const imported = (specifier.propertyName ?? specifier.name).text;
+              if (!specifier.isTypeOnly && !members.has(imported)) {
+                names.delete(specifier.name.text);
+              }
+            }
+          }
+        }
+      } else if (
         (ts.isFunctionDeclaration(statement) && statement.body !== undefined) ||
         ts.isClassDeclaration(statement) ||
         ts.isEnumDeclaration(statement) ||
         ts.isModuleDeclaration(statement) ||
         (ts.isImportEqualsDeclaration(statement) && !statement.isTypeOnly)
       ) {
+        const runtimeShadow =
+          !ts.isSourceFile(scope) || sourceIsModule || ts.isClassDeclaration(statement);
         if (
+          runtimeShadow &&
           !isAmbientContext(statement) &&
           statement.name !== undefined &&
           ts.isIdentifier(statement.name)
@@ -823,7 +859,9 @@ function namesVisibleInScope(scope, inherited, members) {
       } else if (
         ts.isVariableStatement(statement) &&
         !isAmbientContext(statement) &&
-        (ts.isModuleBlock(scope) ||
+        ((ts.isSourceFile(scope) &&
+          (sourceIsModule || (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0)) ||
+          ts.isModuleBlock(scope) ||
           (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0)
       ) {
         for (const declaration of statement.declarationList.declarations) {
@@ -1044,6 +1082,8 @@ function inspectFile(file) {
 
   const sinkSeeds = collectImportedNames(sourceFile, SINK_NAMES);
   const registerSeeds = collectImportedNames(sourceFile, REGISTER_NAMES);
+  const topLevelSinkNames = namesVisibleInScope(sourceFile, sinkSeeds, SINK_NAMES);
+  const topLevelRegisterNames = namesVisibleInScope(sourceFile, registerSeeds, REGISTER_NAMES);
 
   /** @param {import("typescript").Node} node */
   function enclosingBoundary(node) {
@@ -1105,7 +1145,7 @@ function inspectFile(file) {
         fail(file.path, line, "DynamicCall");
       }
       const name = calledName(node);
-      const registerNames = collectAuthorityNames(enclosingBoundary(node), registerSeeds);
+      const registerNames = collectAuthorityNames(enclosingBoundary(node), topLevelRegisterNames);
       if (name !== undefined && registerNames.has(name)) {
         fail(file.path, line, "CallExpression");
       }
@@ -1114,17 +1154,35 @@ function inspectFile(file) {
   }
   rejectForbidden(sourceFile);
 
-  const unownedSeeds = new Set([...sinkSeeds, ...registerSeeds]);
   const unownedMembers = new Set([...SINK_NAMES, ...REGISTER_NAMES]);
+  const topLevelNames = new Set([...topLevelSinkNames, ...topLevelRegisterNames]);
   for (const statement of sourceFile.statements) {
     if (
       ts.isImportDeclaration(statement) ||
-      ts.isExportDeclaration(statement) ||
+      (ts.isExportDeclaration(statement) &&
+        (statement.moduleSpecifier !== undefined || statement.isTypeOnly)) ||
       (ts.isFunctionLike(statement) && hasNamedBoundary(statement))
     ) {
       continue;
     }
-    if (containsSink(statement, unownedSeeds, unownedMembers)) {
+    if (
+      ts.isExportDeclaration(statement) &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause)
+    ) {
+      const escapesAuthority = statement.exportClause.elements.some(
+        (specifier) =>
+          !specifier.isTypeOnly &&
+          topLevelNames.has((specifier.propertyName ?? specifier.name).text),
+      );
+      if (escapesAuthority) {
+        const line =
+          sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1;
+        fail(file.path, line, "TopLevelAuthority");
+      }
+      continue;
+    }
+    if (containsSink(statement, topLevelNames, unownedMembers)) {
       const line =
         sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1;
       fail(file.path, line, "TopLevelAuthority");
@@ -1136,7 +1194,7 @@ function inspectFile(file) {
     sourceFile,
     lines,
     headers,
-    candidates: collectCandidates(sourceFile, sinkSeeds),
+    candidates: collectCandidates(sourceFile, topLevelSinkNames),
   };
 }
 
