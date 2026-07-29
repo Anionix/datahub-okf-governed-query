@@ -343,25 +343,6 @@ function hasDefaultModifier(node) {
     : false;
 }
 
-/** @param {import("typescript").CallExpression} call */
-function calledName(call) {
-  const expression = call.expression;
-  if (ts.isIdentifier(expression)) {
-    return expression.text;
-  }
-  if (ts.isPropertyAccessExpression(expression)) {
-    return expression.name.text;
-  }
-  if (
-    ts.isElementAccessExpression(expression) &&
-    expression.argumentExpression !== undefined &&
-    ts.isStringLiteral(expression.argumentExpression)
-  ) {
-    return expression.argumentExpression.text;
-  }
-  return undefined;
-}
-
 /** @param {import("typescript").Node} node @param {ReadonlySet<string>} names */
 function referencesAuthority(node, names) {
   let found = false;
@@ -905,12 +886,506 @@ function containsSink(boundary, sinkSeeds, memberSeeds = SINK_NAMES) {
   return found;
 }
 
+/** @param {import("typescript").SourceFile} sourceFile */
+// LLM-CONTRACT:
+// Accepts: one parsed source file selected by the governed root scanner
+// Emits: an isolated bound copy and public TypeScript type checker
+// Failure: resolves neither libraries nor imported modules outside the selected file
+// Invariant: binding analysis reads source text without executing or resolving dependencies
+function createBindingChecker(sourceFile) {
+  const fileName = sourceFile.fileName;
+  const boundSourceFile = ts.createSourceFile(
+    fileName,
+    sourceFile.text,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  /** @type {import("typescript").CompilerHost} */
+  const host = {
+    getSourceFile: (requested) => (requested === fileName ? boundSourceFile : undefined),
+    getDefaultLibFileName: () => "lib.d.ts",
+    writeFile: () => {},
+    getCurrentDirectory: () => "",
+    getDirectories: () => [],
+    fileExists: (requested) => requested === fileName,
+    readFile: () => undefined,
+    getCanonicalFileName: (requested) => requested,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => "\n",
+  };
+  const program = ts.createProgram(
+    [fileName],
+    {
+      allowJs: true,
+      checkJs: true,
+      noLib: true,
+      noResolve: true,
+      target: ts.ScriptTarget.Latest,
+    },
+    host,
+  );
+  return { sourceFile: boundSourceFile, checker: program.getTypeChecker() };
+}
+
+/** @param {import("typescript").Declaration} declaration */
+function isRuntimeBindingDeclaration(declaration) {
+  if (isAmbientContext(declaration)) {
+    return false;
+  }
+  if (
+    ts.isImportClause(declaration) ||
+    ts.isImportSpecifier(declaration) ||
+    ts.isNamespaceImport(declaration)
+  ) {
+    /** @type {import("typescript").Node} */
+    let current = declaration;
+    while (!ts.isImportClause(current) && !ts.isSourceFile(current)) {
+      current = current.parent;
+    }
+    return (
+      ts.isImportClause(current) &&
+      !current.isTypeOnly &&
+      (!ts.isImportSpecifier(declaration) || !declaration.isTypeOnly)
+    );
+  }
+  if (
+    ts.isInterfaceDeclaration(declaration) ||
+    ts.isTypeAliasDeclaration(declaration) ||
+    ts.isTypeParameterDeclaration(declaration)
+  ) {
+    return false;
+  }
+  if (ts.isFunctionDeclaration(declaration) && declaration.body === undefined) {
+    return false;
+  }
+  const sourceFile = declaration.getSourceFile();
+  if (!ts.isExternalModule(sourceFile)) {
+    if (
+      ts.isVariableDeclaration(declaration) &&
+      ts.isVariableDeclarationList(declaration.parent) &&
+      (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+    ) {
+      /** @type {import("typescript").Node} */
+      let current = declaration.parent.parent;
+      while (
+        current !== sourceFile &&
+        !ts.isFunctionLike(current) &&
+        !ts.isModuleBlock(current) &&
+        !ts.isClassStaticBlockDeclaration(current)
+      ) {
+        current = current.parent;
+      }
+      if (current === sourceFile) {
+        return false;
+      }
+    }
+    if (
+      (ts.isFunctionDeclaration(declaration) ||
+        ts.isEnumDeclaration(declaration) ||
+        ts.isModuleDeclaration(declaration) ||
+        ts.isImportEqualsDeclaration(declaration)) &&
+      declaration.parent === sourceFile
+    ) {
+      return false;
+    }
+  }
+  return !occursOnlyInErasedSyntax(declaration);
+}
+
+/**
+ * @param {import("typescript").Node} node
+ * @param {import("typescript").TypeChecker} checker
+ */
+function carrierSymbol(node, checker) {
+  if (ts.isIdentifier(node)) {
+    return checker.getSymbolAtLocation(node);
+  }
+  if (node.kind === ts.SyntaxKind.ThisKeyword) {
+    return checker.getTypeAtLocation(node).getSymbol();
+  }
+  return undefined;
+}
+
+/**
+ * @param {import("typescript").Identifier} identifier
+ * @param {import("typescript").TypeChecker} checker
+ * @param {ReadonlySet<import("typescript").Symbol>} authority
+ * @param {ReadonlySet<string>} [members]
+ */
+function identifierCarriesAuthority(identifier, checker, authority, members = SINK_NAMES) {
+  if (isNonRuntimeIdentifier(identifier)) {
+    return false;
+  }
+  const symbol = ts.isShorthandPropertyAssignment(identifier.parent)
+    ? checker.getShorthandAssignmentValueSymbol(identifier.parent)
+    : checker.getSymbolAtLocation(identifier);
+  if (symbol !== undefined && authority.has(symbol)) {
+    return true;
+  }
+  return (
+    members.has(identifier.text) &&
+    (symbol === undefined ||
+      symbol.declarations === undefined ||
+      !symbol.declarations.some(isRuntimeBindingDeclaration))
+  );
+}
+
+/**
+ * @param {import("typescript").Expression} expression
+ * @param {import("typescript").TypeChecker} checker
+ * @param {ReadonlySet<import("typescript").Symbol>} authority
+ * @param {ReadonlySet<string>} [members]
+ * @returns {boolean}
+ */
+function expressionCarriesAuthority(expression, checker, authority, members = SINK_NAMES) {
+  if (ts.isIdentifier(expression)) {
+    return identifierCarriesAuthority(expression, checker, authority, members);
+  }
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) {
+    const symbol = carrierSymbol(expression, checker);
+    return symbol !== undefined && authority.has(symbol);
+  }
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isAwaitExpression(expression) ||
+    ts.isYieldExpression(expression) ||
+    ts.isSpreadElement(expression)
+  ) {
+    return (
+      expression.expression !== undefined &&
+      expressionCarriesAuthority(expression.expression, checker, authority, members)
+    );
+  }
+  if (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) {
+    return (
+      isAuthorityMember(expression, members) ||
+      expressionCarriesAuthority(expression.expression, checker, authority, members)
+    );
+  }
+  if (ts.isArrayLiteralExpression(expression)) {
+    return expression.elements.some((element) =>
+      expressionCarriesAuthority(element, checker, authority, members),
+    );
+  }
+  if (ts.isObjectLiteralExpression(expression)) {
+    return expression.properties.some((property) => {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        return identifierCarriesAuthority(property.name, checker, authority, members);
+      }
+      if (ts.isPropertyAssignment(property) || ts.isSpreadAssignment(property)) {
+        const value = ts.isPropertyAssignment(property)
+          ? property.initializer
+          : property.expression;
+        return (
+          ("name" in property &&
+            property.name !== undefined &&
+            ts.isComputedPropertyName(property.name) &&
+            expressionCarriesAuthority(property.name.expression, checker, authority, members)) ||
+          expressionCarriesAuthority(value, checker, authority, members)
+        );
+      }
+      if (
+        (ts.isMethodDeclaration(property) ||
+          ts.isGetAccessorDeclaration(property) ||
+          ts.isSetAccessorDeclaration(property)) &&
+        ts.isComputedPropertyName(property.name)
+      ) {
+        return expressionCarriesAuthority(property.name.expression, checker, authority, members);
+      }
+      return false;
+    });
+  }
+  if (ts.isConditionalExpression(expression)) {
+    return (
+      expressionCarriesAuthority(expression.whenTrue, checker, authority, members) ||
+      expressionCarriesAuthority(expression.whenFalse, checker, authority, members)
+    );
+  }
+  if (ts.isBinaryExpression(expression)) {
+    const operator = expression.operatorToken.kind;
+    if (operator === ts.SyntaxKind.EqualsToken || operator === ts.SyntaxKind.CommaToken) {
+      return expressionCarriesAuthority(expression.right, checker, authority, members);
+    }
+    if (
+      operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+      operator === ts.SyntaxKind.BarBarToken ||
+      operator === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      return (
+        expressionCarriesAuthority(expression.left, checker, authority, members) ||
+        expressionCarriesAuthority(expression.right, checker, authority, members)
+      );
+    }
+  }
+  if (ts.isCallExpression(expression)) {
+    if (
+      ts.isPropertyAccessExpression(expression.expression) &&
+      expression.expression.name.text === "bind"
+    ) {
+      return expressionCarriesAuthority(
+        expression.expression.expression,
+        checker,
+        authority,
+        members,
+      );
+    }
+    if (expressionCarriesAuthority(expression.expression, checker, authority, members)) {
+      return false;
+    }
+    return expression.arguments.some((argument) =>
+      expressionCarriesAuthority(argument, checker, authority, members),
+    );
+  }
+  if (ts.isNewExpression(expression)) {
+    return (
+      expression.arguments?.some((argument) =>
+        expressionCarriesAuthority(argument, checker, authority, members),
+      ) ?? false
+    );
+  }
+  if (ts.isTaggedTemplateExpression(expression)) {
+    return (
+      ts.isTemplateExpression(expression.template) &&
+      expression.template.templateSpans.some((span) =>
+        expressionCarriesAuthority(span.expression, checker, authority, members),
+      )
+    );
+  }
+  return false;
+}
+
+/**
+ * @param {import("typescript").BindingName} name
+ * @param {boolean} sourceCarries
+ * @param {import("typescript").TypeChecker} checker
+ * @param {Set<import("typescript").Symbol>} authority
+ * @param {ReadonlySet<string>} [members]
+ * @returns {boolean}
+ */
+function taintBindingName(name, sourceCarries, checker, authority, members = SINK_NAMES) {
+  let changed = false;
+  if (ts.isIdentifier(name)) {
+    const symbol = checker.getSymbolAtLocation(name);
+    if (sourceCarries && symbol !== undefined && !authority.has(symbol)) {
+      authority.add(symbol);
+      return true;
+    }
+    return false;
+  }
+  for (const element of name.elements) {
+    if (!ts.isBindingElement(element)) {
+      continue;
+    }
+    const property =
+      element.propertyName ??
+      (ts.isObjectBindingPattern(name) && ts.isIdentifier(element.name) ? element.name : undefined);
+    const elementCarries =
+      sourceCarries ||
+      (property !== undefined && propertyReadsAuthority(property, members)) ||
+      (element.initializer !== undefined &&
+        expressionCarriesAuthority(element.initializer, checker, authority, members));
+    changed =
+      taintBindingName(element.name, elementCarries, checker, authority, members) || changed;
+  }
+  return changed;
+}
+
+/**
+ * @param {import("typescript").Expression} target
+ * @param {boolean} sourceCarries
+ * @param {import("typescript").TypeChecker} checker
+ * @param {Set<import("typescript").Symbol>} authority
+ * @param {ReadonlySet<string>} [members]
+ * @returns {boolean}
+ */
+function taintAssignmentTarget(target, sourceCarries, checker, authority, members = SINK_NAMES) {
+  if (ts.isIdentifier(target)) {
+    const symbol = checker.getSymbolAtLocation(target);
+    if (sourceCarries && symbol !== undefined && !authority.has(symbol)) {
+      authority.add(symbol);
+      return true;
+    }
+    return false;
+  }
+  if (target.kind === ts.SyntaxKind.ThisKeyword) {
+    const symbol = carrierSymbol(target, checker);
+    if (sourceCarries && symbol !== undefined && !authority.has(symbol)) {
+      authority.add(symbol);
+      return true;
+    }
+    return false;
+  }
+  if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+    return taintAssignmentTarget(target.expression, sourceCarries, checker, authority, members);
+  }
+  if (ts.isArrayLiteralExpression(target)) {
+    return target.elements.reduce(
+      (changed, element) =>
+        taintAssignmentTarget(element, sourceCarries, checker, authority, members) || changed,
+      false,
+    );
+  }
+  if (ts.isObjectLiteralExpression(target)) {
+    return target.properties.reduce((changed, property) => {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        return (
+          taintAssignmentTarget(property.name, sourceCarries, checker, authority, members) ||
+          changed
+        );
+      }
+      if (ts.isSpreadAssignment(property)) {
+        return (
+          taintAssignmentTarget(property.expression, sourceCarries, checker, authority, members) ||
+          changed
+        );
+      }
+      if (ts.isPropertyAssignment(property)) {
+        const propertyCarries = sourceCarries || propertyReadsAuthority(property.name, members);
+        if (
+          ts.isBinaryExpression(property.initializer) &&
+          property.initializer.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ) {
+          return (
+            taintAssignmentTarget(
+              property.initializer.left,
+              propertyCarries ||
+                expressionCarriesAuthority(property.initializer.right, checker, authority, members),
+              checker,
+              authority,
+              members,
+            ) || changed
+          );
+        }
+        return (
+          taintAssignmentTarget(
+            property.initializer,
+            propertyCarries,
+            checker,
+            authority,
+            members,
+          ) || changed
+        );
+      }
+      return changed;
+    }, false);
+  }
+  return false;
+}
+
 /**
  * @param {import("typescript").SourceFile} sourceFile
- * @param {ReadonlySet<string>} sinkNames
+ * @param {import("typescript").TypeChecker} checker
+ * @param {ReadonlySet<string>} [members]
+ */
+// LLM-CONTRACT:
+// Accepts: one bound TypeScript source file and its isolated public type checker
+// Emits: the least fixed point of runtime authority-bearing lexical bindings
+// Failure: conservatively propagates opaque authority values instead of erasing them
+// Invariant: binding identity never collapses distinct lexical shadows by name
+function collectAuthorityBindings(sourceFile, checker, members = SINK_NAMES) {
+  /** @type {Set<import("typescript").Symbol>} */
+  const authority = new Set();
+  for (let changed = true; changed; ) {
+    changed = false;
+    /** @param {import("typescript").Node} node */
+    function visit(node) {
+      if (
+        ts.isImportSpecifier(node) &&
+        !node.isTypeOnly &&
+        members.has((node.propertyName ?? node.name).text)
+      ) {
+        const symbol = checker.getSymbolAtLocation(node.name);
+        if (symbol !== undefined && !authority.has(symbol)) {
+          authority.add(symbol);
+          changed = true;
+        }
+      } else if (ts.isVariableDeclaration(node) || ts.isParameter(node)) {
+        const sourceCarries =
+          node.initializer !== undefined &&
+          expressionCarriesAuthority(node.initializer, checker, authority, members);
+        changed =
+          taintBindingName(node.name, sourceCarries, checker, authority, members) || changed;
+      } else if (
+        ts.isBinaryExpression(node) &&
+        (node.operatorToken.kind === ts.SyntaxKind.EqualsToken ||
+          node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+          node.operatorToken.kind === ts.SyntaxKind.BarBarEqualsToken ||
+          node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken)
+      ) {
+        changed =
+          taintAssignmentTarget(
+            node.left,
+            expressionCarriesAuthority(node.right, checker, authority, members),
+            checker,
+            authority,
+            members,
+          ) || changed;
+      } else if (ts.isForOfStatement(node)) {
+        const sourceCarries = expressionCarriesAuthority(
+          node.expression,
+          checker,
+          authority,
+          members,
+        );
+        if (ts.isVariableDeclarationList(node.initializer)) {
+          for (const declaration of node.initializer.declarations) {
+            changed =
+              taintBindingName(declaration.name, sourceCarries, checker, authority, members) ||
+              changed;
+          }
+        } else {
+          changed =
+            taintAssignmentTarget(node.initializer, sourceCarries, checker, authority, members) ||
+            changed;
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+  }
+  return authority;
+}
+
+/**
+ * @param {import("typescript").Node} boundary
+ * @param {import("typescript").TypeChecker} checker
+ * @param {ReadonlySet<import("typescript").Symbol>} authority
+ * @param {ReadonlySet<string>} [members]
+ */
+function containsAuthorityBinding(boundary, checker, authority, members = SINK_NAMES) {
+  let found = false;
+  /** @param {import("typescript").Node} node */
+  function visit(node) {
+    if (found || (node !== boundary && ts.isFunctionLike(node) && hasNamedBoundary(node))) {
+      return;
+    }
+    const thisSymbol =
+      node.kind === ts.SyntaxKind.ThisKeyword ? carrierSymbol(node, checker) : undefined;
+    if (
+      isAuthorityMember(node, members) ||
+      (ts.isIdentifier(node) && identifierCarriesAuthority(node, checker, authority, members)) ||
+      (thisSymbol !== undefined && authority.has(thisSymbol))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(boundary);
+  return found;
+}
+
+/**
+ * @param {import("typescript").SourceFile} sourceFile
+ * @param {import("typescript").TypeChecker} checker
+ * @param {ReadonlySet<import("typescript").Symbol>} authority
  * @returns {readonly Candidate[]}
  */
-function collectCandidates(sourceFile, sinkNames) {
+function collectCandidates(sourceFile, checker, authority) {
   const exportedNames = collectExportedNames(sourceFile);
   /** @type {Candidate[]} */
   const candidates = [];
@@ -923,10 +1398,14 @@ function collectCandidates(sourceFile, sinkNames) {
         required:
           hasExportModifier(node) ||
           (node.parent === sourceFile && exportedNames.has(node.name.text)) ||
-          containsSink(node, sinkNames),
+          containsAuthorityBinding(node, checker, authority),
       });
     } else if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name)) {
-      candidates.push({ symbol: node.name.text, node, required: containsSink(node, sinkNames) });
+      candidates.push({
+        symbol: node.name.text,
+        node,
+        required: containsAuthorityBinding(node, checker, authority),
+      });
     } else if (
       ts.isPropertyDeclaration(node) &&
       ts.isIdentifier(node.name) &&
@@ -936,7 +1415,7 @@ function collectCandidates(sourceFile, sinkNames) {
       candidates.push({
         symbol: node.name.text,
         node,
-        required: containsSink(node.initializer, sinkNames),
+        required: containsAuthorityBinding(node.initializer, checker, authority),
       });
     } else if (
       ts.isVariableDeclaration(node) &&
@@ -953,7 +1432,7 @@ function collectCandidates(sourceFile, sinkNames) {
           (ts.isVariableStatement(statement) &&
             statement.parent === sourceFile &&
             exportedNames.has(node.name.text)) ||
-          containsSink(node.initializer, sinkNames),
+          containsAuthorityBinding(node.initializer, checker, authority),
       });
     }
     ts.forEachChild(node, visit);
@@ -1084,18 +1563,13 @@ function inspectFile(file) {
   const registerSeeds = collectImportedNames(sourceFile, REGISTER_NAMES);
   const topLevelSinkNames = namesVisibleInScope(sourceFile, sinkSeeds, SINK_NAMES);
   const topLevelRegisterNames = namesVisibleInScope(sourceFile, registerSeeds, REGISTER_NAMES);
-
-  /** @param {import("typescript").Node} node */
-  function enclosingBoundary(node) {
-    let current = node.parent;
-    while (current !== sourceFile) {
-      if (ts.isFunctionLike(current) && hasNamedBoundary(current)) {
-        return current;
-      }
-      current = current.parent;
-    }
-    return sourceFile;
-  }
+  const binding = createBindingChecker(sourceFile);
+  const authorityBindings = collectAuthorityBindings(binding.sourceFile, binding.checker);
+  const registerBindings = collectAuthorityBindings(
+    binding.sourceFile,
+    binding.checker,
+    REGISTER_NAMES,
+  );
 
   /** @param {import("typescript").Node} node */
   function rejectForbidden(node) {
@@ -1144,15 +1618,20 @@ function inspectFile(file) {
       ) {
         fail(file.path, line, "DynamicCall");
       }
-      const name = calledName(node);
-      const registerNames = collectAuthorityNames(enclosingBoundary(node), topLevelRegisterNames);
-      if (name !== undefined && registerNames.has(name)) {
+      if (
+        expressionCarriesAuthority(
+          node.expression,
+          binding.checker,
+          registerBindings,
+          REGISTER_NAMES,
+        )
+      ) {
         fail(file.path, line, "CallExpression");
       }
     }
     ts.forEachChild(node, rejectForbidden);
   }
-  rejectForbidden(sourceFile);
+  rejectForbidden(binding.sourceFile);
 
   const unownedMembers = new Set([...SINK_NAMES, ...REGISTER_NAMES]);
   const topLevelNames = new Set([...topLevelSinkNames, ...topLevelRegisterNames]);
@@ -1194,7 +1673,7 @@ function inspectFile(file) {
     sourceFile,
     lines,
     headers,
-    candidates: collectCandidates(sourceFile, topLevelSinkNames),
+    candidates: collectCandidates(binding.sourceFile, binding.checker, authorityBindings),
   };
 }
 
