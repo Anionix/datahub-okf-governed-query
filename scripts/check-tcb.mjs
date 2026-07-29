@@ -845,7 +845,7 @@ function namesVisibleInScope(scope, inherited, members) {
         element.dotDotDotToken !== undefined ||
         (property !== undefined && propertyReadsAuthority(property, propertyNames)) ||
         (element.initializer !== undefined &&
-          referencesVisibleAuthority(element.initializer, propertyNames, members));
+          referencesVisibleAuthority(element.initializer, names, members));
       removeHarmlessCatchBindings(element.name, elementCarries, propertyNames);
     }
   }
@@ -856,7 +856,11 @@ function namesVisibleInScope(scope, inherited, members) {
   } else if (ts.isCatchClause(scope) && scope.variableDeclaration !== undefined) {
     // Catch alias policy source: https://github.com/Anionix/datahub-okf-governed-query/issues/39
     // Mixed binding policy source: https://github.com/Anionix/datahub-okf-governed-query/issues/44
-    // Catch state: each property is resolved independently against pre-catch aliases.
+    // Default scope policy source: https://github.com/Anionix/datahub-okf-governed-query/issues/53
+    // https://tc39.es/ecma262/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-catchclauseevaluation
+    // https://tc39.es/ecma262/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-propertybindinginitialization
+    // https://tc39.es/ecma262/multipage/ecmascript-language-statements-and-declarations.html#sec-runtime-semantics-keyedbindinginitialization
+    // Catch state transition: properties use pre-catch aliases; defaults use prior local bindings.
     removeHarmlessCatchBindings(scope.variableDeclaration.name, false, new Set(names));
   } else if (
     (ts.isForStatement(scope) || ts.isForInStatement(scope) || ts.isForOfStatement(scope)) &&

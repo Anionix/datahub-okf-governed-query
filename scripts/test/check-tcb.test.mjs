@@ -825,6 +825,7 @@ const mixedCatchBindingControls = [
   "try {} catch ({ execFile: run, message: writeFile }) { void writeFile; }",
   "try {} catch ({ details: { execFile: run, message: writeFile } }) { void writeFile; }",
   "try {} catch ({ execFile: run, message: writeFile = safe }) { void writeFile; }",
+  "try {} catch ({ message: writeFile = safe, other: run = writeFile }) { run(); }",
   'try {} catch ({ ["execFile"]: run, ["message"]: writeFile }) { void writeFile; }',
 ];
 
@@ -845,6 +846,28 @@ test("retains the authority-bearing mixed catch element", (context) => {
     files: {
       [sourcePath]:
         "try {} catch ({ execFile: run, message: writeFile }) { run(); void writeFile; }",
+    },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /TopLevelAuthority/u);
+});
+
+test("retains authority through an earlier catch-local default", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([]),
+    files: {
+      [sourcePath]: "try {} catch ({ execFile: cap, other: run = cap }) { run(); }",
+    },
+  });
+  assertRejected(result);
+  assert.match(result.stderr, /TopLevelAuthority/u);
+});
+
+test("retains a later authority property after a harmless catch-local shadow", (context) => {
+  const result = runFixture(context, {
+    manifest: manifest([]),
+    files: {
+      [sourcePath]: "try {} catch ({ message: writeFile = safe, execFile: run }) { run(); }",
     },
   });
   assertRejected(result);
