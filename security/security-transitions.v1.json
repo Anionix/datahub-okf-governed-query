@@ -3,6 +3,15 @@
   "transitions": [
     {
       "root": "integration",
+      "path": "scripts/check-pnpm-settings.mjs",
+      "symbol": "main",
+      "accepts": "repository package manifest lockfile and effective pinned pnpm configuration",
+      "emits": "success only for the reviewed effective overrides and matching lock entries",
+      "failure": "rejects ignored malformed missing duplicate stale or unverified settings",
+      "invariant": "the probe reads configuration without installing packages or running scripts"
+    },
+    {
+      "root": "integration",
       "path": "scripts/check-tcb.mjs",
       "symbol": "inspectFile",
       "accepts": "UTF-8 bytes from one selected governed source file",
